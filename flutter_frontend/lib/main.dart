@@ -12,109 +12,206 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Database Assistant',
+      title: 'Smart AI Assistant',
       theme: ThemeData(
         primarySwatch: Colors.blue,
+        fontFamily: 'Roboto',
       ),
-      home: const DatabaseAssistantPage(),
+      home: const SmartAssistantPage(),
     );
   }
 }
 
-class DatabaseAssistantPage extends StatefulWidget {
-  const DatabaseAssistantPage({super.key});
+class SmartAssistantPage extends StatefulWidget {
+  const SmartAssistantPage({super.key});
 
   @override
-  State<DatabaseAssistantPage> createState() => _DatabaseAssistantPageState();
+  State<SmartAssistantPage> createState() => _SmartAssistantPageState();
 }
 
-class _DatabaseAssistantPageState extends State<DatabaseAssistantPage> {
+class _SmartAssistantPageState extends State<SmartAssistantPage> {
   final TextEditingController _queryController = TextEditingController();
-  String _response = '';
+  final ScrollController _scrollController = ScrollController();
+  List<ChatMessage> _messages = [];
   bool _isLoading = false;
 
-  // Updated Railway URL
+  // Your Railway URL
   final String apiUrl = 'https://database-assistant-clean-production.up.railway.app';
+
+  @override
+  void initState() {
+    super.initState();
+    _addMessage('AI', 'Hello! I\'m your smart AI assistant. I can help you with:\n\n• Database queries (customers, products, sales)\n• General questions about anything\n• Creating charts and reports\n\nWhat would you like to know?', 'assistant');
+  }
+
+  void _addMessage(String sender, String message, String type) {
+    setState(() {
+      _messages.add(ChatMessage(sender: sender, message: message, type: type));
+    });
+    _scrollToBottom();
+  }
+
+  void _scrollToBottom() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_scrollController.hasClients) {
+        _scrollController.animateTo(
+          _scrollController.position.maxScrollExtent,
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeOut,
+        );
+      }
+    });
+  }
 
   Future<void> _sendQuery() async {
     final String query = _queryController.text.trim();
     
-    if (query.isEmpty) {
-      setState(() {
-        _response = 'Please enter a query';
-      });
-      return;
-    }
+    if (query.isEmpty) return;
+    
+    // Add user message
+    _addMessage('You', query, 'user');
+    _queryController.clear();
 
     setState(() {
       _isLoading = true;
-      _response = 'Sending query...';
     });
 
     try {
-      // Test connection first
-      print('Testing connection to: $apiUrl');
-      
       final response = await http.post(
         Uri.parse('$apiUrl/query'),
         headers: {
           'Content-Type': 'application/json',
         },
         body: json.encode({'query': query}),
-      ).timeout(const Duration(seconds: 30));
-
-      print('Response status: ${response.statusCode}');
-      print('Response body: ${response.body}');
+      ).timeout(const Duration(seconds: 45));
 
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
-        setState(() {
-          _response = data['response'] ?? 'No response received';
-          _isLoading = false;
-        });
+        String responseText = data['response'] ?? 'No response received';
+        String responseType = data['type'] ?? 'unknown';
+        String source = data['source'] ?? 'unknown';
+        
+        // Format response based on type
+        String formattedResponse = _formatResponse(responseText, responseType, source);
+        
+        _addMessage('AI', formattedResponse, responseType);
       } else {
-        setState(() {
-          _response = 'Error: ${response.statusCode} - ${response.body}';
-          _isLoading = false;
-        });
+        _addMessage('AI', 'Sorry, I encountered an error. Please try again.', 'error');
       }
     } catch (e) {
-      print('Error occurred: $e');
+      _addMessage('AI', 'Connection error. Please check your internet connection and try again.', 'error');
+    } finally {
       setState(() {
-        _response = 'Connection Error: $e';
         _isLoading = false;
       });
     }
   }
 
-  Future<void> _testConnection() async {
-    setState(() {
-      _isLoading = true;
-      _response = 'Testing connection...';
-    });
+  String _formatResponse(String response, String type, String source) {
+    switch (type) {
+      case 'database':
+        return '📊 DATABASE RESULT:\n\n$response\n\n💡 This data comes from your PostgreSQL database.';
+      case 'general':
+        return '🤖 AI RESPONSE:\n\n$response';
+      case 'database_fallback':
+        return '⚠️ DATABASE UNAVAILABLE:\n\n$response';
+      default:
+        return response;
+    }
+  }
 
-    try {
-      final response = await http.get(
-        Uri.parse(apiUrl),
-      ).timeout(const Duration(seconds: 10));
+  Widget _buildMessageBubble(ChatMessage message) {
+    bool isUser = message.sender == 'You';
+    
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
+      child: Row(
+        mainAxisAlignment: isUser ? MainAxisAlignment.end : MainAxisAlignment.start,
+        children: [
+          if (!isUser) ...[
+            CircleAvatar(
+              radius: 16,
+              backgroundColor: _getTypeColor(message.type),
+              child: Icon(
+                _getTypeIcon(message.type),
+                size: 16,
+                color: Colors.white,
+              ),
+            ),
+            const SizedBox(width: 8),
+          ],
+          Flexible(
+            child: Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: isUser ? Colors.blue[600] : Colors.grey[100],
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (!isUser) ...[
+                    Text(
+                      message.sender,
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        color: _getTypeColor(message.type),
+                        fontSize: 12,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                  ],
+                  Text(
+                    message.message,
+                    style: TextStyle(
+                      color: isUser ? Colors.white : Colors.black87,
+                      fontSize: 14,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          if (isUser) ...[
+            const SizedBox(width: 8),
+            const CircleAvatar(
+              radius: 16,
+              backgroundColor: Colors.blue,
+              child: Icon(Icons.person, size: 16, color: Colors.white),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
 
-      if (response.statusCode == 200) {
-        final data = json.decode(response.body);
-        setState(() {
-          _response = 'Connection Success!\nStatus: ${data['status']}\nMessage: ${data['message']}';
-          _isLoading = false;
-        });
-      } else {
-        setState(() {
-          _response = 'Connection failed: ${response.statusCode}';
-          _isLoading = false;
-        });
-      }
-    } catch (e) {
-      setState(() {
-        _response = 'Connection Error: $e';
-        _isLoading = false;
-      });
+  Color _getTypeColor(String type) {
+    switch (type) {
+      case 'database':
+        return Colors.green;
+      case 'general':
+        return Colors.purple;
+      case 'assistant':
+        return Colors.blue;
+      case 'error':
+        return Colors.red;
+      default:
+        return Colors.grey;
+    }
+  }
+
+  IconData _getTypeIcon(String type) {
+    switch (type) {
+      case 'database':
+        return Icons.storage;
+      case 'general':
+        return Icons.psychology;
+      case 'assistant':
+        return Icons.assistant;
+      case 'error':
+        return Icons.error;
+      default:
+        return Icons.smart_toy;
     }
   }
 
@@ -122,65 +219,132 @@ class _DatabaseAssistantPageState extends State<DatabaseAssistantPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Database Assistant'),
-        backgroundColor: Colors.blue,
+        title: const Text('Smart AI Assistant'),
+        backgroundColor: Colors.blue[700],
+        elevation: 0,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.info_outline),
+            onPressed: () => _showInfoDialog(),
+          ),
+        ],
       ),
-      body: Padding(
-        padding: const EdgeInsets.all(16.0),
+      body: Container(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [Colors.blue[700]!, Colors.blue[50]!],
+          ),
+        ),
         child: Column(
           children: [
-            TextField(
-              controller: _queryController,
-              decoration: const InputDecoration(
-                labelText: 'Enter your query',
-                border: OutlineInputBorder(),
-              ),
-              maxLines: 3,
-            ),
-            const SizedBox(height: 16),
-            Row(
-              children: [
-                Expanded(
-                  child: ElevatedButton(
-                    onPressed: _isLoading ? null : _sendQuery,
-                    child: _isLoading 
-                        ? const CircularProgressIndicator(color: Colors.white)
-                        : const Text('Send Query'),
-                  ),
-                ),
-                const SizedBox(width: 16),
-                ElevatedButton(
-                  onPressed: _isLoading ? null : _testConnection,
-                  style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
-                  child: const Text('Test Connection'),
-                ),
-              ],
-            ),
-            const SizedBox(height: 20),
             Expanded(
-              child: Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  border: Border.all(color: Colors.grey),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: SingleChildScrollView(
-                  child: Text(
-                    _response.isEmpty ? 'Response will appear here...' : _response,
-                    style: const TextStyle(fontSize: 14),
-                  ),
-                ),
+              child: ListView.builder(
+                controller: _scrollController,
+                itemCount: _messages.length,
+                itemBuilder: (context, index) {
+                  return _buildMessageBubble(_messages[index]);
+                },
               ),
             ),
-            const SizedBox(height: 10),
-            Text(
-              'Backend: $apiUrl',
-              style: const TextStyle(fontSize: 12, color: Colors.grey),
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black12,
+                    blurRadius: 5,
+                    offset: Offset(0, -2),
+                  ),
+                ],
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _queryController,
+                      decoration: InputDecoration(
+                        hintText: 'Ask me anything...',
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(25),
+                          borderSide: BorderSide.none,
+                        ),
+                        filled: true,
+                        fillColor: Colors.grey[100],
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 20,
+                          vertical: 10,
+                        ),
+                      ),
+                      maxLines: null,
+                      textInputAction: TextInputAction.send,
+                      onSubmitted: (_) => _sendQuery(),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Container(
+                    decoration: BoxDecoration(
+                      color: Colors.blue[600],
+                      shape: BoxShape.circle,
+                    ),
+                    child: IconButton(
+                      onPressed: _isLoading ? null : _sendQuery,
+                      icon: _isLoading
+                          ? const SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(
+                                color: Colors.white,
+                                strokeWidth: 2,
+                              ),
+                            )
+                          : const Icon(Icons.send, color: Colors.white),
+                    ),
+                  ),
+                ],
+              ),
             ),
           ],
         ),
       ),
     );
   }
+
+  void _showInfoDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Smart AI Assistant'),
+        content: const Text(
+          'This app can help you with:\n\n'
+          '📊 Database Questions:\n'
+          '• Customer information\n'
+          '• Product data\n'
+          '• Sales reports\n'
+          '• Charts and analytics\n\n'
+          '🤖 General Questions:\n'
+          '• Any topic you\'re curious about\n'
+          '• Explanations and advice\n'
+          '• Problem solving\n\n'
+          'Just type your question and I\'ll figure out how to help!',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Got it!'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class ChatMessage {
+  final String sender;
+  final String message;
+  final String type;
+
+  ChatMessage({required this.sender, required this.message, required this.type});
 }
