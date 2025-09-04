@@ -1,0 +1,93 @@
+2025-08-31 14:05:45,986 - INFO - AI model connected successfully
+2025-08-31 14:05:47,514 - INFO - Database connection pool created
+2025-08-31 14:05:49,876 - INFO - AI model connected successfully
+2025-08-31 14:05:50,944 - INFO - Database connection pool created
+2025-08-31 14:18:33,746 - INFO - [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5000
+ * Running on http://192.168.8.155:5000
+2025-08-31 14:18:33,746 - INFO - [33mPress CTRL+C to quit[0m
+2025-08-31 14:18:33,758 - INFO -  * Restarting with watchdog (fsevents)
+2025-08-31 14:18:35,408 - WARNING -  * Debugger is active!
+2025-08-31 14:18:35,422 - INFO -  * Debugger PIN: 128-045-936
+2025-08-31 14:19:17,680 - INFO - Processing query from client: show me last year's sales...
+2025-08-31 14:19:17,681 - INFO - Received query: show me last year's sales
+2025-08-31 14:19:19,769 - INFO - AI model connected successfully
+2025-08-31 14:19:21,597 - INFO - Database connection pool created
+2025-08-31 14:19:24,826 - INFO - Query executed - 13 rows returned
+2025-08-31 14:19:25,015 - INFO - Generated response length: 119 characters
+2025-08-31 14:19:25,016 - INFO - 192.168.8.107 - - [31/Aug/2025 14:19:25] "POST /query HTTP/1.1" 200 -
+2025-08-31 14:19:50,240 - INFO - Processing query from client: show me 2025...
+2025-08-31 14:19:50,242 - INFO - Received query: show me 2025
+2025-08-31 14:19:53,701 - INFO - Query executed - 12 rows returned
+2025-08-31 14:19:53,812 - INFO - Generated response length: 130 characters
+2025-08-31 14:19:53,813 - INFO - 192.168.8.107 - - [31/Aug/2025 14:19:53] "POST /query HTTP/1.1" 200 -
+2025-08-31 14:20:03,726 - INFO - Processing query from client: put it in a bar chart...
+2025-08-31 14:20:03,728 - INFO - Received query: put it in a bar chart
+2025-08-31 14:20:04,921 - INFO - Query executed - 1 rows returned
+2025-08-31 14:20:05,093 - INFO - Generated response length: 31 characters
+2025-08-31 14:20:05,094 - INFO - 192.168.8.107 - - [31/Aug/2025 14:20:05] "POST /query HTTP/1.1" 200 -
+2025-08-31 19:20:00,377 - INFO - [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5000
+ * Running on http://192.168.8.155:5000
+2025-08-31 19:20:00,378 - INFO - [33mPress CTRL+C to quit[0m
+2025-08-31 19:20:00,395 - INFO -  * Restarting with watchdog (fsevents)
+2025-08-31 19:20:02,090 - WARNING -  * Debugger is active!
+2025-08-31 19:20:02,100 - INFO -  * Debugger PIN: 128-045-936
+2025-08-31 19:20:40,841 - INFO - Processing query from client: show me the sales for 2025...
+2025-08-31 19:20:40,842 - INFO - Received query: show me the sales for 2025
+2025-08-31 19:20:42,623 - INFO - AI model connected successfully
+2025-08-31 19:20:44,552 - INFO - Database connection pool created
+2025-08-31 19:20:47,782 - INFO - Query executed - 12 rows returned
+2025-08-31 19:20:47,949 - INFO - Generated response length: 118 characters
+2025-08-31 19:20:47,951 - INFO - 192.168.8.107 - - [31/Aug/2025 19:20:47] "POST /query HTTP/1.1" 200 -
+2025-08-31 19:21:55,683 - INFO - Processing query from client: show me the monthly sales for 2025...
+2025-08-31 19:21:55,684 - INFO - Received query: show me the monthly sales for 2025
+2025-08-31 19:21:59,407 - INFO - Query executed - 12 rows returned
+2025-08-31 19:21:59,531 - INFO - Generated response length: 118 characters
+2025-08-31 19:21:59,532 - INFO - 192.168.8.107 - - [31/Aug/2025 19:21:59] "POST /query HTTP/1.1" 200 -
+2025-08-31 19:22:17,240 - INFO -  * Detected change in '/Users/obliterate_23/Desktop/Flutter App/backend/DBAssistant_Final.py', reloading
+2025-08-31 19:22:19,931 - INFO -  * Restarting with watchdog (fsevents)
+2025-08-31 19:22:22,510 - WARNING -  * Debugger is active!
+2025-08-31 19:22:22,521 - INFO -  * Debugger PIN: 128-045-936
+2025-08-31 19:22:44,922 - INFO - [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5000
+ * Running on http://192.168.8.155:5000
+2025-08-31 19:22:44,922 - INFO - [33mPress CTRL+C to quit[0m
+2025-08-31 19:22:44,929 - INFO -  * Restarting with watchdog (fsevents)
+2025-08-31 19:22:46,575 - WARNING -  * Debugger is active!
+2025-08-31 19:22:46,583 - INFO -  * Debugger PIN: 128-045-936
+2025-08-31 19:23:15,653 - INFO - Processing query from client: show me the monthly sales for 2025...
+2025-08-31 19:23:15,654 - INFO - Received query: show me the monthly sales for 2025
+2025-08-31 19:23:17,862 - INFO - AI model connected successfully
+2025-08-31 19:23:19,297 - INFO - Database connection pool created
+2025-08-31 19:23:22,918 - INFO - Query executed - 12 rows returned
+2025-08-31 19:23:23,046 - INFO - Generated response length: 278 characters
+2025-08-31 19:23:23,047 - INFO - 192.168.8.107 - - [31/Aug/2025 19:23:23] "POST /query HTTP/1.1" 200 -
+2025-08-31 19:23:34,464 - INFO - Processing query from client: can you show them in a bar chart...
+2025-08-31 19:23:34,465 - INFO - Received query: can you show them in a bar chart
+2025-08-31 19:23:35,820 - INFO - Query executed - 1 rows returned
+2025-08-31 19:23:35,981 - INFO - Generated response length: 67 characters
+2025-08-31 19:23:35,982 - INFO - 192.168.8.107 - - [31/Aug/2025 19:23:35] "POST /query HTTP/1.1" 200 -
+2025-08-31 19:53:23,111 - INFO - [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5000
+ * Running on http://192.168.8.155:5000
+2025-08-31 19:53:23,111 - INFO - [33mPress CTRL+C to quit[0m
+2025-08-31 19:53:23,125 - INFO -  * Restarting with watchdog (fsevents)
+2025-08-31 19:53:24,792 - WARNING -  * Debugger is active!
+2025-08-31 19:53:24,804 - INFO -  * Debugger PIN: 128-045-936
+2025-08-31 19:54:18,394 - INFO - Processing query from client: show me the monthly sales of 2025...
+2025-08-31 19:54:18,396 - INFO - Received query: show me the monthly sales of 2025
+2025-08-31 19:54:21,997 - INFO - AI model connected successfully
+2025-08-31 19:54:23,267 - INFO - Database connection pool created
+2025-08-31 19:54:27,115 - INFO - Query executed - 12 rows returned
+2025-08-31 19:54:27,278 - INFO - Generated response length: 278 characters
+2025-08-31 19:54:27,279 - INFO - 192.168.8.107 - - [31/Aug/2025 19:54:27] "POST /query HTTP/1.1" 200 -
+2025-08-31 19:54:54,873 - INFO - Processing query from client: make me a bar chart...
+2025-08-31 19:54:54,874 - INFO - Received query: make me a bar chart
+2025-08-31 19:54:56,131 - INFO - Query executed - 2 rows returned
+2025-08-31 19:54:56,287 - INFO - Generated response length: 65 characters
+2025-08-31 19:54:56,288 - INFO - 192.168.8.107 - - [31/Aug/2025 19:54:56] "POST /query HTTP/1.1" 200 -
