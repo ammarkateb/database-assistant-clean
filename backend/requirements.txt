@@ -1,28 +1,9 @@
-# Core dependencies with specific versions that work well together
+# Essential Flask dependencies only
 Flask==3.0.0
 Flask-CORS==4.0.0
 Werkzeug==3.0.1
-
-# Database and data processing
-pandas==2.1.4
-psycopg2-binary==2.9.9
-python-dotenv==1.0.0
-
-# AI and ML
-google-generativeai==0.3.2
-
-# Text processing
-pyspellchecker==0.7.2
-
-# Data visualization (optional - may cause issues on Railway)
-# matplotlib==3.8.2
-# seaborn==0.13.0
-
-# Audio processing (optional - may cause issues on Railway)  
-# SpeechRecognition==3.10.0
-
-# Scientific computing
-numpy==1.26.2
-
-# System dependencies
 gunicorn==21.2.0
+
+# Optional: If you want to add database functionality later
+# psycopg2-binary==2.9.9
+# python-dotenv==1.0.0
