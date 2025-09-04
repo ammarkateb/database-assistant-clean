@@ -4,167 +4,208 @@ import logging
 import os
 import sys
 import traceback
-import google.generativeai as genai
 
-# Import your database assistant
-try:
-    from db_assistant import DatabaseAssistant
-    DB_AVAILABLE = True
-except ImportError as e:
-    print(f"Warning: Could not import DatabaseAssistant: {e}")
-    DB_AVAILABLE = False
+# Setup logging first
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Debug environment variables
+print("=== ENVIRONMENT VARIABLES DEBUG ===")
+print(f"GOOGLE_API_KEY exists: {'GOOGLE_API_KEY' in os.environ}")
+print(f"DB_HOST: {os.getenv('DB_HOST', 'NOT_FOUND')}")
+print(f"DB_USER: {os.getenv('DB_USER', 'NOT_FOUND')}")
+print(f"DB_NAME: {os.getenv('DB_NAME', 'NOT_FOUND')}")
+print(f"DB_PASSWORD exists: {'DB_PASSWORD' in os.environ}")
+print(f"DB_PORT: {os.getenv('DB_PORT', 'NOT_FOUND')}")
+print("=== END DEBUG ===")
 
 app = Flask(__name__)
 CORS(app)
 
-# Setup logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+# Try to import database assistant with detailed error logging
+print("=== IMPORTING DATABASE ASSISTANT ===")
+try:
+    from db_assistant import DatabaseAssistant
+    print("DatabaseAssistant imported successfully")
+    DB_AVAILABLE = True
+except ImportError as e:
+    print(f"ImportError: Could not import DatabaseAssistant: {e}")
+    print(f"Full traceback: {traceback.format_exc()}")
+    DB_AVAILABLE = False
+except Exception as e:
+    print(f"Unexpected error importing DatabaseAssistant: {e}")
+    print(f"Full traceback: {traceback.format_exc()}")
+    DB_AVAILABLE = False
 
-# Initialize AI
-GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
-if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
-    ai_model = genai.GenerativeModel('gemini-1.5-flash')
-    AI_AVAILABLE = True
-else:
-    AI_AVAILABLE = False
-    logger.warning("No Gemini API key found")
-
-# Initialize database assistant
+# Try to initialize database assistant
 db_assistant = None
 if DB_AVAILABLE:
+    print("=== INITIALIZING DATABASE ASSISTANT ===")
     try:
         db_assistant = DatabaseAssistant()
-        logger.info("Database Assistant initialized successfully")
+        print("DatabaseAssistant initialized successfully")
+        logger.info("DatabaseAssistant initialized successfully")
     except Exception as e:
-        logger.error(f"Failed to initialize Database Assistant: {e}")
+        print(f"Failed to initialize DatabaseAssistant: {e}")
+        print(f"Full traceback: {traceback.format_exc()}")
+        logger.error(f"Failed to initialize DatabaseAssistant: {e}")
         DB_AVAILABLE = False
 
-def is_database_question(query: str) -> bool:
-    """Determine if question is about the database"""
+# Try to initialize Gemini AI with detailed error logging
+print("=== INITIALIZING GEMINI AI ===")
+try:
+    import google.generativeai as genai
+    print("google.generativeai imported successfully")
+    
+    gemini_api_key = os.getenv("GOOGLE_API_KEY")
+    if gemini_api_key:
+        print(f"GOOGLE_API_KEY found (length: {len(gemini_api_key)})")
+        genai.configure(api_key=gemini_api_key)
+        gemini_model = genai.GenerativeModel('gemini-1.5-flash')
+        
+        # Test the connection
+        test_response = gemini_model.generate_content("Test")
+        print("Gemini AI test successful")
+        AI_AVAILABLE = True
+        logger.info("Gemini AI initialized successfully")
+    else:
+        print("GOOGLE_API_KEY not found in environment variables")
+        AI_AVAILABLE = False
+        logger.warning("GOOGLE_API_KEY not found - AI features disabled")
+except Exception as e:
+    print(f"Failed to initialize Gemini AI: {e}")
+    print(f"Full traceback: {traceback.format_exc()}")
+    AI_AVAILABLE = False
+    logger.error(f"Failed to initialize Gemini AI: {e}")
+
+print(f"=== INITIALIZATION COMPLETE ===")
+print(f"DB_AVAILABLE: {DB_AVAILABLE}")
+print(f"AI_AVAILABLE: {AI_AVAILABLE}")
+
+def is_database_question(query):
+    """Determine if question is database-related"""
     database_keywords = [
-        'customer', 'customers', 'product', 'products', 'invoice', 'invoices',
-        'sales', 'revenue', 'purchase', 'order', 'orders', 'how many', 'count',
-        'total', 'sum', 'average', 'chart', 'graph', 'report', 'data',
-        'database', 'table', 'record', 'show me', 'list', 'find'
+        'customer', 'product', 'invoice', 'order', 'sale', 'revenue', 
+        'profit', 'data', 'record', 'count', 'total', 'average', 
+        'chart', 'graph', 'report', 'analysis', 'database', 'table'
     ]
     
     query_lower = query.lower()
     return any(keyword in query_lower for keyword in database_keywords)
 
-def get_ai_response(query: str) -> str:
-    """Get response from AI for general questions"""
+def get_ai_response(query):
+    """Get response from Gemini AI for general questions"""
+    if not AI_AVAILABLE:
+        return "AI service is not available. Please ask database-related questions instead."
+    
     try:
-        if AI_AVAILABLE:
-            response = ai_model.generate_content(f"""
-            You are a helpful AI assistant. Answer this question clearly and concisely:
-            
-            Question: {query}
-            
-            Provide a helpful, accurate response.
-            """)
-            return response.text
-        else:
-            return "AI service is currently unavailable. This appears to be a general question rather than a database query."
+        response = gemini_model.generate_content(query)
+        return response.text
     except Exception as e:
-        logger.error(f"AI response error: {e}")
-        return f"I encountered an error while processing your general question: {str(e)}"
+        logger.error(f"Gemini AI error: {e}")
+        return f"Sorry, I couldn't process your question. Error: {str(e)}"
 
-@app.route('/', methods=['GET'])
+@app.route('/')
 def health_check():
+    """Health check endpoint"""
     return jsonify({
         'status': 'healthy',
         'message': 'Smart AI Database Assistant is running!',
+        'version': '2.0',
         'database_available': DB_AVAILABLE,
         'ai_available': AI_AVAILABLE,
         'capabilities': [
             'Database queries with charts',
-            'General AI questions',
+            'General AI questions', 
             'Intelligent question routing'
-        ],
-        'version': '2.0'
+        ]
     })
 
 @app.route('/query', methods=['POST'])
-def process_query():
+def handle_query():
+    """Handle both database and general queries intelligently"""
     try:
         data = request.get_json()
-        query = data.get('query', '')
         
-        if not query:
-            return jsonify({'error': 'No query provided'}), 400
+        if not data or 'query' not in data:
+            return jsonify({
+                'error': 'No query provided',
+                'response': 'Please provide a query in the request body.'
+            }), 400
+
+        user_query = data['query'].strip()
         
-        logger.info(f"Processing query: {query}")
+        if not user_query:
+            return jsonify({
+                'error': 'Empty query',
+                'response': 'Please provide a non-empty query.'
+            }), 400
+
+        logger.info(f"Processing query: {user_query}")
         
-        # Determine if this is a database or general question
-        if is_database_question(query):
-            # Database question - use your database assistant
-            if DB_AVAILABLE and db_assistant:
-                try:
-                    response = db_assistant.get_response_from_db_assistant(query)
-                    return jsonify({
-                        'response': response,
-                        'type': 'database',
-                        'source': 'postgresql_database',
-                        'status': 'success'
-                    })
-                except Exception as e:
-                    logger.error(f"Database query failed: {e}")
-                    # Fall back to AI for database questions if DB fails
-                    fallback_response = get_ai_response(f"This is a database question but I cannot access the database right now. Please provide a general answer about: {query}")
-                    return jsonify({
-                        'response': f"Database temporarily unavailable. General answer: {fallback_response}",
-                        'type': 'database_fallback',
-                        'source': 'ai_fallback',
-                        'status': 'fallback'
-                    })
-            else:
-                # Database not available, use AI
-                ai_response = get_ai_response(query)
+        # Determine if this is a database question
+        if is_database_question(user_query) and DB_AVAILABLE:
+            try:
+                # Use database assistant for database-related questions
+                logger.info("Processing as database query")
+                response = db_assistant.get_response_from_db_assistant(user_query)
+                
                 return jsonify({
-                    'response': f"Database not connected. AI response: {ai_response}",
-                    'type': 'database_unavailable',
-                    'source': 'ai_only',
-                    'status': 'ai_fallback'
+                    'response': response,
+                    'query': user_query,
+                    'source': 'database',
+                    'success': True
                 })
+                
+            except Exception as db_error:
+                logger.error(f"Database query failed: {db_error}")
+                
+                # Fallback to AI if database fails
+                if AI_AVAILABLE:
+                    logger.info("Database failed, falling back to AI")
+                    ai_response = get_ai_response(user_query)
+                    return jsonify({
+                        'response': f"Database temporarily unavailable. Here's what I can tell you: {ai_response}",
+                        'query': user_query,
+                        'source': 'ai_fallback',
+                        'success': True,
+                        'note': 'Database connection failed, used AI instead'
+                    })
+                else:
+                    return jsonify({
+                        'error': 'Database unavailable',
+                        'response': 'Sorry, the database is temporarily unavailable and AI fallback is also disabled.',
+                        'query': user_query,
+                        'source': 'error'
+                    })
         
         else:
-            # General question - use AI
-            ai_response = get_ai_response(query)
-            return jsonify({
-                'response': ai_response,
-                'type': 'general',
-                'source': 'gemini_ai',
-                'status': 'success'
-            })
-            
+            # Handle general questions with AI
+            if AI_AVAILABLE:
+                logger.info("Processing as general AI query")
+                ai_response = get_ai_response(user_query)
+                return jsonify({
+                    'response': ai_response,
+                    'query': user_query,
+                    'source': 'ai',
+                    'success': True
+                })
+            else:
+                return jsonify({
+                    'error': 'AI unavailable',
+                    'response': 'Sorry, AI features are currently unavailable. Please try database-related questions instead.',
+                    'query': user_query,
+                    'source': 'error'
+                })
+
     except Exception as e:
         logger.error(f"Error processing query: {e}")
         return jsonify({
-            'error': f'Processing error: {str(e)}',
-            'status': 'error'
+            'error': 'Internal server error',
+            'response': f'Sorry, there was an error processing your request: {str(e)}',
+            'source': 'error'
         }), 500
-
-@app.route('/debug', methods=['GET'])
-def debug_info():
-    return jsonify({
-        'files_in_directory': os.listdir('.'),
-        'database_available': DB_AVAILABLE,
-        'ai_available': AI_AVAILABLE,
-        'environment_vars': {k: ('SET' if v else 'NOT_SET') for k, v in {
-            'GEMINI_API_KEY': GEMINI_API_KEY,
-            'DATABASE_URL': os.getenv('DATABASE_URL'),
-            'DATABASE_HOST': os.getenv('DATABASE_HOST')
-        }.items()},
-        'capabilities': {
-            'database_queries': DB_AVAILABLE,
-            'ai_responses': AI_AVAILABLE,
-            'intelligent_routing': True
-        }
-    })
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=False)
-# Force redeploy
