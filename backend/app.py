@@ -9,16 +9,6 @@ import traceback
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Debug environment variables
-print("=== ENVIRONMENT VARIABLES DEBUG ===")
-print(f"GOOGLE_API_KEY exists: {'GOOGLE_API_KEY' in os.environ}")
-print(f"DB_HOST: {os.getenv('DB_HOST', 'NOT_FOUND')}")
-print(f"DB_USER: {os.getenv('DB_USER', 'NOT_FOUND')}")
-print(f"DB_NAME: {os.getenv('DB_NAME', 'NOT_FOUND')}")
-print(f"DB_PASSWORD exists: {'DB_PASSWORD' in os.environ}")
-print(f"DB_PORT: {os.getenv('DB_PORT', 'NOT_FOUND')}")
-print("=== END DEBUG ===")
-
 app = Flask(__name__)
 CORS(app)
 
@@ -130,7 +120,10 @@ def handle_query():
         if not data or 'query' not in data:
             return jsonify({
                 'error': 'No query provided',
-                'response': 'Please provide a query in the request body.'
+                'response': 'Please provide a query in the request body.',
+                'success': False,
+                'data': [],
+                'chart': None
             }), 400
 
         user_query = data['query'].strip()
@@ -138,7 +131,10 @@ def handle_query():
         if not user_query:
             return jsonify({
                 'error': 'Empty query',
-                'response': 'Please provide a non-empty query.'
+                'response': 'Please provide a non-empty query.',
+                'success': False,
+                'data': [],
+                'chart': None
             }), 400
 
         logger.info(f"Processing query: {user_query}")
@@ -146,16 +142,14 @@ def handle_query():
         # Determine if this is a database question
         if is_database_question(user_query) and DB_AVAILABLE:
             try:
-                # Use database assistant for database-related questions
-                logger.info("Processing as database query")
-                response = db_assistant.get_response_from_db_assistant(user_query)
+                # Use the comprehensive database assistant method that returns structured data
+                logger.info("Processing as database query with structured response")
                 
-                return jsonify({
-                    'response': response,
-                    'query': user_query,
-                    'source': 'database',
-                    'success': True
-                })
+                # Use the more comprehensive method that returns structured data
+                response_data = db_assistant.execute_query_and_get_results(user_query)
+                
+                # The method returns a dict with success, message, data, chart, etc.
+                return jsonify(response_data)
                 
             except Exception as db_error:
                 logger.error(f"Database query failed: {db_error}")
@@ -169,6 +163,8 @@ def handle_query():
                         'query': user_query,
                         'source': 'ai_fallback',
                         'success': True,
+                        'data': [],
+                        'chart': None,
                         'note': 'Database connection failed, used AI instead'
                     })
                 else:
@@ -176,7 +172,10 @@ def handle_query():
                         'error': 'Database unavailable',
                         'response': 'Sorry, the database is temporarily unavailable and AI fallback is also disabled.',
                         'query': user_query,
-                        'source': 'error'
+                        'source': 'error',
+                        'success': False,
+                        'data': [],
+                        'chart': None
                     })
         
         else:
@@ -188,14 +187,19 @@ def handle_query():
                     'response': ai_response,
                     'query': user_query,
                     'source': 'ai',
-                    'success': True
+                    'success': True,
+                    'data': [],
+                    'chart': None
                 })
             else:
                 return jsonify({
                     'error': 'AI unavailable',
                     'response': 'Sorry, AI features are currently unavailable. Please try database-related questions instead.',
                     'query': user_query,
-                    'source': 'error'
+                    'source': 'error',
+                    'success': False,
+                    'data': [],
+                    'chart': None
                 })
 
     except Exception as e:
@@ -203,7 +207,10 @@ def handle_query():
         return jsonify({
             'error': 'Internal server error',
             'response': f'Sorry, there was an error processing your request: {str(e)}',
-            'source': 'error'
+            'source': 'error',
+            'success': False,
+            'data': [],
+            'chart': None
         }), 500
 
 if __name__ == '__main__':

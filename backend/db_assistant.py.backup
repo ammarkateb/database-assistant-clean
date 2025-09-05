@@ -3,9 +3,7 @@
 
 # In[ ]:
 
-import base64
-import io
-from typing import Optional, Dict, Any
+
 import pandas as pd
 import psycopg2
 from psycopg2.pool import SimpleConnectionPool
@@ -837,11 +835,11 @@ Generate ONLY a valid SQL query:"""
             print(f"Something unexpected happened: {e}")
             return None, False
     
-    def create_enhanced_chart(self, df: pd.DataFrame, chart_type: str, question: str) -> Optional[Dict[str, Any]]:
-        """Create beautiful, enhanced charts and return as base64 for Flutter"""
+    def create_enhanced_chart(self, df: pd.DataFrame, chart_type: str, question: str):
+        """Create beautiful, enhanced charts"""
         if df.empty or len(df.columns) < 2:
             print("Not enough data to create a meaningful chart")
-            return None
+            return
         
         plt.style.use('default')
         fig, ax = plt.subplots(figsize=(12, 8))
@@ -855,10 +853,9 @@ Generate ONLY a valid SQL query:"""
                     labels=df.iloc[:, 0],
                     autopct='%1.1f%%',
                     colors=colors,
-                    startangle=90,
                     explode=[0.05] * len(df),
                     shadow=True,
-                    textprops={'fontsize': 11, 'fontweight': 'bold'}
+                    startangle=90
                 )
                 
                 for autotext in autotexts:
@@ -881,12 +878,9 @@ Generate ONLY a valid SQL query:"""
                 # Add value labels
                 for i, bar in enumerate(bars):
                     height = bar.get_height()
-                    ax.annotate(f'{height:,.0f}',
-                              xy=(bar.get_x() + bar.get_width() / 2, height),
-                              xytext=(0, 3),
-                              textcoords="offset points",
-                              ha='center', va='bottom',
-                              fontweight='bold')
+                    ax.text(bar.get_x() + bar.get_width()/2., height + height*0.01,
+                           f'{height:,.0f}', ha='center', va='bottom', 
+                           fontweight='bold', fontsize=10)
                 
                 ax.set_xlabel(df.columns[0], fontsize=12, fontweight='bold')
                 ax.set_ylabel(df.columns[1], fontsize=12, fontweight='bold')
@@ -898,205 +892,54 @@ Generate ONLY a valid SQL query:"""
                 ax.spines['right'].set_visible(False)
             
             plt.tight_layout()
+            plt.show()
             
-            # Convert to base64 for Flutter
-            buffer = io.BytesIO()
-            plt.savefig(buffer, format='png', dpi=300, bbox_inches='tight', facecolor='white')
-            buffer.seek(0)
-            
-            # Encode to base64
-            chart_base64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
-            
-            # Also save locally (optional)
+            # Save chart
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             filename = f"chart_{chart_type}_{timestamp}.png"
             plt.savefig(filename, dpi=300, bbox_inches='tight', facecolor='white')
             print(f"Saved your {chart_type} chart as: {filename}")
             
-            plt.close(fig)  # Important: close figure to free memory
-            
-            return {
-                'chart_base64': chart_base64,
-                'chart_type': chart_type,
-                'filename': filename
-            }
-            
         except Exception as e:
             logger.error(f"Chart error: {e}")
             print(f"Couldn't create the chart: {e}")
-            plt.close(fig)  # Close even on error
-            return None
-
-    def display_results_naturally(self, df: pd.DataFrame, question: str, max_rows: int = 50):
-        """Display results in a natural, conversational way with configurable limit"""
+    
+    def display_results_naturally(self, df: pd.DataFrame, question: str):
+        """Display results in a natural, conversational way"""
         if df.empty:
             print("Didn't find anything matching that query")
-            return df.to_dict('records')  # Return empty list for Flutter
+            return
         
+        # Natural conversation about results
         row_count = len(df)
-        
         if row_count == 1:
-            print("Found exactly 1 result:")
+            print(f"Found exactly one result!")
+        elif row_count <= 10:
+            print(f"Here are the {row_count} results I found:")
         else:
             print(f"Found {row_count} results. Here are the highlights:")
         
-        # Show appropriate amount of data - INCREASED LIMIT
-        if row_count <= max_rows:  # Changed from 15 to configurable max_rows (default 50)
+        # Show appropriate amount of data
+        if row_count <= 15:
             print("\n" + df.to_string(index=False))
-            display_df = df
         else:
-            show_count = min(30, max_rows)  # Show 30 instead of 10 when truncating
-            print(f"\nTop {show_count} results:")
-            print(df.head(show_count).to_string(index=False))
-            print(f"\nWant to see more? I have {row_count - show_count} additional results!")
-            display_df = df.head(show_count)
+            print(f"\nTop 10 results:")
+            print(df.head(10).to_string(index=False))
+            print(f"\nWant to see more? I have {row_count - 10} additional results!")
         
         # Natural insights
-        if row_count > 1 and len(df.columns) >= 2:
-            for col in df.select_dtypes(include=[np.number]).columns:
-                if col != df.columns[0]:  # Skip first column if it's an ID
-                    max_val = df[col].max()
-                    min_val = df[col].min()
-                    avg_val = df[col].mean()
-                    print(f"\nQuick insights for {col}:")
-                    print(f"   Highest: {max_val:,.2f}")
-                    print(f"   Lowest: {min_val:,.2f}") 
-                    print(f"   Average: {avg_val:,.2f}")
-        
-        # Return data for Flutter
-        return display_df.to_dict('records')
-
-# Add this method to your DatabaseAssistant class in db_assistant.py
-# Find the existing execute_query_and_get_results method and replace it with this complete version:
-
-    def execute_query_and_get_results(self, user_input: str) -> Dict[str, Any]:
-        """Execute query and return comprehensive results for Flutter"""
-        
-        # Initialize response structure
-        response_data = {
-            'success': False,
-            'message': '',
-            'data': [],
-            'chart': None,
-            'query': '',
-            'intent': '',
-            'row_count': 0
-        }
-        
-        try:
-            # Process the question
-            processed_question = self.preprocess_question(user_input)
-            interpreted_input, intent, interpretation = self.understand_human_input(user_input)
-            
-            response_data['intent'] = intent
-            
-            # Handle chart creation from previous results
-            if interpretation['action'] == 'create_chart':
-                if self.context.last_results is not None and not self.context.last_results.empty:
-                    chart_type = interpretation['chart_type']
-                    print(f"Creating a {chart_type} chart from your last results...")
-                    chart_data = self.create_enhanced_chart(
-                        self.context.last_results, 
-                        chart_type, 
-                        self.context.last_question or "Previous Query Results"
-                    )
-                    
-                    response_data.update({
-                        'success': True,
-                        'message': f"Created {chart_type} chart from previous results",
-                        'data': self.context.last_results.to_dict('records'),
-                        'chart': chart_data,
-                        'row_count': len(self.context.last_results)
-                    })
-                    
-                    self.context.last_chart_type = chart_type
-                    return response_data
-                else:
-                    response_data.update({
-                        'success': False,
-                        'message': "I don't have any recent results to chart. Ask me a question first!"
-                    })
-                    return response_data
-            
-            # Regular query processing
-            if not self.query_generator.should_generate_sql(processed_question, intent):
-                response_msg = self.query_generator.handle_non_sql_response(processed_question, intent, self.context)
-                response_data.update({
-                    'success': True,
-                    'message': response_msg
-                })
-                return response_data
-            
-            # Generate and execute SQL
-            sql_query, chart_type = self.get_query_and_chart_type(
-                processed_question, 
-                context_aware=interpretation['reference_previous']
-            )
-            
-            response_data['query'] = sql_query
-            
-            if not sql_query:
-                response_data.update({
-                    'success': False,
-                    'message': "I couldn't understand that question. Try asking something like 'How many customers do I have?'"
-                })
-                return response_data
-            
-            # Execute query
-            df_result, success = self.execute_query(sql_query)
-            
-            if success and df_result is not None:
-                # Convert DataFrame to list of dictionaries for JSON serialization
-                display_data = df_result.head(50).to_dict('records')  # Limit to 50 rows for performance
+        numeric_cols = df.select_dtypes(include=['number']).columns
+        if len(numeric_cols) > 0:
+            for col in numeric_cols:
+                max_val = df[col].max()
+                min_val = df[col].min()
+                avg_val = df[col].mean()
                 
-                # Create chart if requested or if data is suitable for visualization
-                chart_data = None
-                if chart_type and len(df_result) > 0 and len(df_result.columns) >= 2:
-                    print(f"\nCreating {chart_type} chart!")
-                    chart_data = self.create_enhanced_chart(df_result, chart_type, user_input)
-                elif len(df_result) > 1 and len(df_result.columns) >= 2:
-                    # Auto-suggest chart for suitable data
-                    numeric_cols = df_result.select_dtypes(include=['number']).columns
-                    if len(numeric_cols) > 0 and len(df_result) <= 20:  # Good for pie chart
-                        chart_data = self.create_enhanced_chart(df_result, 'pie', user_input)
-                    elif len(numeric_cols) > 0:  # Good for bar chart
-                        chart_data = self.create_enhanced_chart(df_result.head(15), 'bar', user_input)
-                
-                # Update context
-                self.context.last_query = sql_query
-                self.context.last_question = user_input
-                self.context.last_results = df_result
-                self.context.last_chart_type = chart_type
-                
-                # Format message
-                message = f"Found {len(df_result)} results"
-                if chart_data:
-                    message += f" with {chart_type or 'auto-generated'} chart"
-                
-                response_data.update({
-                    'success': True,
-                    'message': message,
-                    'data': display_data,
-                    'chart': chart_data,
-                    'row_count': len(df_result)
-                })
-                
-            else:
-                response_data.update({
-                    'success': False,
-                    'message': "No results found or there was an error executing the query."
-                })
-            
-            return response_data
-            
-        except Exception as e:
-            logger.error(f"Error in execute_query_and_get_results: {e}")
-            response_data.update({
-                'success': False,
-                'message': f"An error occurred: {str(e)}"
-            })
-            return response_data
-
+                print(f"\nQuick insights for {col}:")
+                print(f"   Highest: {max_val:,.2f}")
+                print(f"   Lowest: {min_val:,.2f}") 
+                print(f"   Average: {avg_val:,.2f}")
+    
     def suggest_next_actions(self, df: pd.DataFrame, chart_type: Optional[str]):
         """Suggest logical next steps"""
         if df.empty:
