@@ -5,6 +5,15 @@ import os
 import sys
 import traceback
 
+
+
+# Setup logging first
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+app = Flask(__name__)
+CORS(app)
+
 # Add this after the existing imports
 try:
     from facial_auth import FacialAuthSystem
@@ -14,13 +23,6 @@ try:
 except Exception as e:
     print(f"Failed to initialize Facial Authentication: {e}")
     FACIAL_AUTH_AVAILABLE = False
-
-# Setup logging first
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-app = Flask(__name__)
-CORS(app)
 
 # Try to import database assistant with detailed error logging
 print("=== IMPORTING DATABASE ASSISTANT ===")
