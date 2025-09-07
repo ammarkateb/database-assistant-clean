@@ -1,194 +1,278 @@
-# facial_auth.py
 import sqlite3
+import face_recognition
+import numpy as np
 import base64
-import io
 from PIL import Image
+import io
+import uuid
 from datetime import datetime
-from typing import List, Dict, Optional
+import logging
+
+logger = logging.getLogger(__name__)
 
 class FacialAuthSystem:
-    def __init__(self, db_path: str = "facial_auth.db"):
-        self.db_path = db_path
+    def __init__(self):
+        self.db_path = 'facial_auth.db'
         self.init_database()
-        self.authorized_faces = self.load_authorized_faces()
-        
+    
     def init_database(self):
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS authorized_users (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL,
-                role TEXT NOT NULL CHECK (role IN ('admin', 'read-only')),
-                face_encoding BLOB NOT NULL,
-                date_added TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                is_active BOOLEAN DEFAULT TRUE
-            )
-        ''')
-        
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS access_logs (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER,
-                user_name TEXT,
-                access_type TEXT,
-                query TEXT,
-                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                ip_address TEXT,
-                success BOOLEAN
-            )
-        ''')
-        
-        conn.commit()
-        conn.close()
-    
-    def load_authorized_faces(self):
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        cursor.execute('SELECT id, name, role, face_encoding FROM authorized_users WHERE is_active = TRUE')
-
-        authorized_faces = []
-        for row in cursor.fetchall():
-            user_id, name, role, encoding_blob = row
-            # Skip face_encoding processing for now
-            authorized_faces.append({
-                'id': user_id,
-                'name': name,
-                'role': role
-            })
-        
-        conn.close()
-        return authorized_faces
-    
-    def authenticate_face(self, image_data: str):
+        """Initialize the facial authentication database"""
         try:
-            # Basic image validation
-            if not image_data or image_data == "test":
-                return {
-                    "success": False, 
-                    "message": "No image provided",
-                    "permission_level": "read-only",
-                    "user": None
-                }
-            
-            # Validate it's actually image data
-            try:
-                if 'base64,' in image_data:
-                    image_data = image_data.split('base64,')[1]
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
                 
-                image_bytes = base64.b64decode(image_data)
-                image = Image.open(io.BytesIO(image_bytes))
-                # If we get here, it's a valid image
-            except:
-                return {
-                    "success": False,
-                    "message": "Invalid image format",
-                    "permission_level": "read-only", 
-                    "user": None
-                }
-            
-            # Demo authentication: if authorized users exist, authenticate as first admin
-            if len(self.authorized_faces) > 0:
-                # Find first admin user, or fallback to any user
-                admin_user = next((user for user in self.authorized_faces if user['role'] == 'admin'), None)
-                user = admin_user or self.authorized_faces[0]
+                # Create users table
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS users (
+                        id TEXT PRIMARY KEY,
+                        name TEXT NOT NULL,
+                        face_encoding BLOB NOT NULL,
+                        permission_level TEXT NOT NULL,
+                        created_at TEXT NOT NULL
+                    )
+                ''')
                 
-                return {
-                    "success": True,
-                    "message": f"Demo mode: Authenticated as {user['name']}",
-                    "permission_level": user['role'],
-                    "user": {
-                        "id": user['id'],
-                        "name": user['name'], 
-                        "role": user['role']
+                # Create access logs table
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS access_logs (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        user_id TEXT,
+                        user_name TEXT,
+                        access_type TEXT,
+                        query TEXT,
+                        ip_address TEXT,
+                        timestamp TEXT,
+                        success BOOLEAN
+                    )
+                ''')
+                
+                conn.commit()
+                logger.info("Facial auth database initialized successfully")
+        except Exception as e:
+            logger.error(f"Failed to initialize database: {e}")
+    
+    def execute_query(self, query, params=None):
+        """Execute a database query"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                if params:
+                    cursor.execute(query, params)
+                else:
+                    cursor.execute(query)
+                
+                if query.strip().upper().startswith('SELECT'):
+                    return cursor.fetchall()
+                else:
+                    conn.commit()
+                    return cursor.rowcount
+        except Exception as e:
+            logger.error(f"Database query failed: {e}")
+            raise e
+    
+    def authenticate_user(self, image_base64):
+        """Authenticate user using facial recognition"""
+        try:
+            # Decode base64 image
+            image_data = base64.b64decode(image_base64)
+            image = Image.open(io.BytesIO(image_data))
+            image_np = np.array(image)
+            
+            # Get face encoding
+            face_encodings = face_recognition.face_encodings(image_np)
+            if not face_encodings:
+                return {"success": False, "message": "No face found in image"}
+            
+            user_encoding = face_encodings[0]
+            
+            # Check against known faces
+            users = self.get_all_users()
+            for user in users:
+                known_encoding = np.frombuffer(user['face_encoding'], dtype=np.float64)
+                match = face_recognition.compare_faces([known_encoding], user_encoding, tolerance=0.6)
+                
+                if match[0]:
+                    return {
+                        "success": True,
+                        "user": {"id": user['id'], "name": user['name']},
+                        "permission_level": user['permission_level'],
+                        "message": f"Welcome back, {user['name']}!"
                     }
-                }
             
-            return {
-                "success": False,
-                "message": "No authorized users found. Add users first.",
-                "permission_level": "read-only",
-                "user": None
-            }
+            return {"success": False, "message": "Face not recognized"}
             
         except Exception as e:
-            return {
-                "success": False,
-                "message": f"Authentication error: {str(e)}",
-                "permission_level": "read-only",
-                "user": None
-            }
+            logger.error(f"Authentication failed: {e}")
+            return {"success": False, "message": f"Authentication failed: {str(e)}"}
     
-    def check_query_permission(self, query: str, permission_level: str):
-        if permission_level == 'none':
-            return {"allowed": False, "message": "No database access"}
-        
-        write_keywords = ['INSERT', 'UPDATE', 'DELETE', 'DROP', 'CREATE', 'ALTER', 'TRUNCATE']
-        query_upper = query.upper().strip()
-        is_write = any(keyword in query_upper for keyword in write_keywords)
-        
-        if is_write and permission_level != 'admin':
-            return {"allowed": False, "message": "Write operations require admin privileges"}
-        
-        return {"allowed": True, "message": "Query authorized"}
-    
-    def log_access(self, user_id, user_name, access_type, query, ip_address, success):
+    def create_admin_user(self, name, image_base64):
+        """Create admin user with facial recognition"""
         try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            cursor.execute('''
-                INSERT INTO access_logs (user_id, user_name, access_type, query, ip_address, success)
-                VALUES (?, ?, ?, ?, ?, ?)
-            ''', (user_id, user_name, access_type, query, ip_address, success))
-            conn.commit()
-            conn.close()
-        except Exception as e:
-            print(f"Error logging access: {e}")
-
-    def should_generate_chart(self, query: str):
-        """Check if query should generate a chart"""
-        chart_keywords = ['chart', 'graph', 'plot', 'visual', 'show', 'display']
-        return any(keyword in query.lower() for keyword in chart_keywords)
-
-    def add_authorized_user(self, name: str, role: str, image_data: str):
-        try:
-            # Validate image
-            if 'base64,' in image_data:
-                image_data = image_data.split('base64,')[1]
+            # Check if admin already exists
+            users = self.get_all_users()
+            if any(user['permission_level'] == 'admin' for user in users):
+                return {"success": False, "message": "Admin user already exists"}
             
-            image_bytes = base64.b64decode(image_data)
-            image = Image.open(io.BytesIO(image_bytes))
+            # Decode and process image
+            image_data = base64.b64decode(image_base64)
+            image = Image.open(io.BytesIO(image_data))
+            image_np = np.array(image)
             
-            # Store user without face encoding for now
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
+            # Get face encoding
+            face_encodings = face_recognition.face_encodings(image_np)
+            if not face_encodings:
+                return {"success": False, "message": "No face found in image"}
             
-            cursor.execute('''
-                INSERT INTO authorized_users (name, role, face_encoding)
-                VALUES (?, ?, ?)
-            ''', (name, role, b'demo_encoding'))
+            face_encoding = face_encodings[0]
             
-            conn.commit()
-            user_id = cursor.lastrowid
-            conn.close()
+            # Save to database
+            user_id = str(uuid.uuid4())
+            query = """
+            INSERT INTO users (id, name, face_encoding, permission_level, created_at)
+            VALUES (?, ?, ?, ?, ?)
+            """
             
-            # Reload faces
-            self.authorized_faces = self.load_authorized_faces()
+            self.execute_query(query, (
+                user_id,
+                name,
+                face_encoding.tobytes(),
+                'admin',
+                datetime.now().isoformat()
+            ))
             
             return {
                 "success": True,
-                "message": f"User {name} added successfully",
+                "message": f"Admin user '{name}' created successfully",
                 "user_id": user_id
             }
             
         except Exception as e:
+            logger.error(f"Failed to create admin: {e}")
+            return {"success": False, "message": f"Failed to create admin: {str(e)}"}
+    
+    def get_all_users(self):
+        """Get all users from database"""
+        try:
+            query = "SELECT id, name, face_encoding, permission_level, created_at FROM users"
+            rows = self.execute_query(query)
+            
+            users = []
+            for row in rows:
+                users.append({
+                    'id': row[0],
+                    'name': row[1],
+                    'face_encoding': row[2],
+                    'permission_level': row[3],
+                    'created_at': row[4]
+                })
+            return users
+        except Exception as e:
+            logger.error(f"Failed to get users: {e}")
+            return []
+    
+    def check_query_permission(self, query, permission_level):
+        """Check if user has permission for the query"""
+        # Admin users can do anything
+        if permission_level == 'admin':
+            return {"allowed": True, "message": "Admin access granted"}
+        
+        # Check for dangerous operations for read-only users
+        dangerous_keywords = ['drop', 'delete', 'truncate', 'alter', 'create', 'insert', 'update']
+        query_lower = query.lower()
+        
+        for keyword in dangerous_keywords:
+            if keyword in query_lower:
+                return {
+                    "allowed": False, 
+                    "message": f"Read-only users cannot perform '{keyword}' operations"
+                }
+        
+        return {"allowed": True, "message": "Query allowed"}
+    
+    def should_generate_chart(self, query):
+        """Check if query should generate a chart"""
+        chart_keywords = ['chart', 'graph', 'plot', 'visual', 'show', 'display']
+        return any(keyword in query.lower() for keyword in chart_keywords)
+    
+    def log_access(self, user_id, user_name, access_type, query, ip_address, success):
+        """Log access attempt"""
+        try:
+            log_query = """
+            INSERT INTO access_logs (user_id, user_name, access_type, query, ip_address, timestamp, success)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """
+            
+            self.execute_query(log_query, (
+                user_id,
+                user_name,
+                access_type,
+                query,
+                ip_address,
+                datetime.now().isoformat(),
+                success
+            ))
+        except Exception as e:
+            logger.error(f"Failed to log access: {e}")
+    
+    def authenticate_face(self, image_base64):
+        """Legacy method for compatibility"""
+        return self.authenticate_user(image_base64)
+    
+    def add_authorized_user(self, name, role, image_base64):
+        """Add a new authorized user"""
+        try:
+            # Decode and process image
+            image_data = base64.b64decode(image_base64)
+            image = Image.open(io.BytesIO(image_data))
+            image_np = np.array(image)
+            
+            # Get face encoding
+            face_encodings = face_recognition.face_encodings(image_np)
+            if not face_encodings:
+                return {"success": False, "message": "No face found in image"}
+            
+            face_encoding = face_encodings[0]
+            
+            # Save to database
+            user_id = str(uuid.uuid4())
+            query = """
+            INSERT INTO users (id, name, face_encoding, permission_level, created_at)
+            VALUES (?, ?, ?, ?, ?)
+            """
+            
+            self.execute_query(query, (
+                user_id,
+                name,
+                face_encoding.tobytes(),
+                role,
+                datetime.now().isoformat()
+            ))
+            
             return {
-                "success": False,
-                "message": f"Error adding user: {str(e)}"
+                "success": True,
+                "message": f"User '{name}' added successfully",
+                "user_id": user_id
             }
-
+            
+        except Exception as e:
+            logger.error(f"Failed to add user: {e}")
+            return {"success": False, "message": f"Failed to add user: {str(e)}"}
+    
     def get_authorized_users(self):
-        return [{"id": user["id"], "name": user["name"], "role": user["role"]} 
-                for user in self.authorized_faces]
+        """Get list of authorized users (without face encodings)"""
+        try:
+            query = "SELECT id, name, permission_level, created_at FROM users"
+            rows = self.execute_query(query)
+            
+            users = []
+            for row in rows:
+                users.append({
+                    'id': row[0],
+                    'name': row[1],
+                    'permission_level': row[2],
+                    'created_at': row[3]
+                })
+            return users
+        except Exception as e:
+            logger.error(f"Failed to get authorized users: {e}")
+            return []
