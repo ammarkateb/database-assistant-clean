@@ -29,3 +29,5 @@ python-dotenv==1.0.0
 # Utilities
 Pillow==10.1.0
 
+# Facial recognition - try alternative approach
+opencv-python-headless==4.8.1.78
