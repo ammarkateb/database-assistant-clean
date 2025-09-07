@@ -1671,6 +1671,45 @@ class ConversationMemory:
         
         return suggestions
 
+    def create_chart_from_data(self, data, query):
+        """Create chart from query results and return as base64"""
+        import matplotlib.pyplot as plt
+        import seaborn as sns
+        from io import BytesIO
+        import base64
+        
+        # Convert data to DataFrame
+        df = pd.DataFrame(data)
+        
+        plt.figure(figsize=(10, 6))
+        
+        # Simple chart logic based on data
+        if 'month' in df.columns and 'total_sales' in df.columns:
+            # Sales by month chart
+            plt.plot(df['month'], df['total_sales'].astype(float), marker='o', linewidth=2)
+            plt.title('Sales by Month 2025')
+            plt.xlabel('Month')
+            plt.ylabel('Sales ($)')
+            plt.xticks(rotation=45)
+        elif len(df.columns) >= 2:
+            # Generic bar chart for other data
+            plt.bar(df.iloc[:, 0].astype(str), df.iloc[:, 1].astype(float))
+            plt.title('Database Query Results')
+            plt.xticks(rotation=45)
+        
+        plt.tight_layout()
+        
+        # Convert to base64
+        buffer = BytesIO()
+        plt.savefig(buffer, format='png', dpi=150, bbox_inches='tight')
+        buffer.seek(0)
+        chart_base64 = base64.b64encode(buffer.getvalue()).decode()
+        plt.close()
+        
+        return chart_base64
+
+# ADD STEP 2 CODE HERE:
+
 # ADD STEP 2 CODE HERE:
 def get_db_response(user_query):
     """Main function to call from Flask app"""

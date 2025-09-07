@@ -147,6 +147,11 @@ class FacialAuthSystem:
         except Exception as e:
             print(f"Error logging access: {e}")
 
+    def should_generate_chart(self, query: str):
+        """Check if query should generate a chart"""
+        chart_keywords = ['chart', 'graph', 'plot', 'visual', 'show', 'display']
+        return any(keyword in query.lower() for keyword in chart_keywords)
+
     def add_authorized_user(self, name: str, role: str, image_data: str):
         try:
             # Validate image

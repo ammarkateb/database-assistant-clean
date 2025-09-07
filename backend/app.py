@@ -333,6 +333,19 @@ def secure_database_query():
         if DB_AVAILABLE:
             response_data = db_assistant.execute_query_and_get_results(query)
             
+            # Check if user asked for a chart and we have data
+            if (facial_auth.should_generate_chart(query) and 
+                response_data.get('data') and 
+                len(response_data['data']) > 0):
+                
+                # Generate chart image
+                try:
+                    chart_base64 = db_assistant.create_chart_from_data(response_data['data'], query)
+                    response_data['chart_image'] = chart_base64
+                    response_data['message'] += '\n\nChart generated successfully!'
+                except Exception as e:
+                    logger.error(f"Chart generation failed: {e}")
+            
             # Log successful query
             facial_auth.log_access(
                 user_id=user_data.get('id') if user_data else None,
@@ -350,6 +363,7 @@ def secure_database_query():
     except Exception as e:
         logger.error(f"Secure query error: {e}")
         return jsonify({"success": False, "message": f"Server error: {str(e)}"})
+ 
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
