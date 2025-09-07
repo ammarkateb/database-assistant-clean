@@ -1,0 +1,11 @@
+{
+  "build": {
+    "builder": "nixpacks",
+    "buildCommand": "pip install --upgrade pip && pip install -r requirements.txt"
+  },
+  "deploy": {
+    "startCommand": "gunicorn --bind 0.0.0.0:$PORT --workers 2 --timeout 300 app:app",
+    "healthcheckPath": "/",
+    "healthcheckTimeout": 300
+  }
+}
