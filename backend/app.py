@@ -12,12 +12,12 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 CORS(app)
 
-# Add this after the existing imports
+# TEMPORARILY DISABLE FACIAL AUTH FOR DEPLOYMENT
 try:
-    from facial_auth import FacialAuthSystem
-    facial_auth = FacialAuthSystem()
-    FACIAL_AUTH_AVAILABLE = True
-    print("Facial Authentication system initialized successfully")
+    # from facial_auth import FacialAuthSystem
+    # facial_auth = FacialAuthSystem()
+    FACIAL_AUTH_AVAILABLE = False
+    print("Facial Authentication temporarily disabled for deployment")
 except Exception as e:
     print(f"Failed to initialize Facial Authentication: {e}")
     FACIAL_AUTH_AVAILABLE = False
@@ -81,6 +81,7 @@ except Exception as e:
 print(f"=== INITIALIZATION COMPLETE ===")
 print(f"DB_AVAILABLE: {DB_AVAILABLE}")
 print(f"AI_AVAILABLE: {AI_AVAILABLE}")
+print(f"FACIAL_AUTH_AVAILABLE: {FACIAL_AUTH_AVAILABLE}")
 
 def is_database_question(query):
     """Determine if question is database-related"""
@@ -119,7 +120,7 @@ def health_check():
             'Database queries with charts',
             'General AI questions', 
             'Intelligent question routing',
-            'Facial recognition authentication'
+            'Facial recognition authentication (temporarily disabled)'
         ]
     })
 
@@ -225,183 +226,67 @@ def handle_query():
             'chart': None
         }), 500
 
-# NEW: Missing endpoints that your Flutter app needs
+# FACIAL AUTH ENDPOINTS - TEMPORARILY DISABLED
 @app.route('/authenticate', methods=['POST'])
 def authenticate():
     """Authenticate user with facial recognition"""
-    if not FACIAL_AUTH_AVAILABLE:
-        return jsonify({"success": False, "message": "Facial authentication not available"})
-    
-    try:
-        data = request.get_json()
-        image_data = data.get('image')
-        
-        if not image_data:
-            return jsonify({"success": False, "message": "Image required"})
-        
-        result = facial_auth.authenticate_user(image_data)
-        return jsonify(result)
-        
-    except Exception as e:
-        logger.error(f"Authentication error: {e}")
-        return jsonify({"success": False, "message": f"Authentication error: {str(e)}"})
+    return jsonify({
+        "success": False, 
+        "message": "Facial authentication temporarily disabled for deployment. Please try the basic database queries for now."
+    })
 
 @app.route('/setup-admin', methods=['POST'])
 def setup_admin():
     """Setup admin user with facial recognition"""
-    if not FACIAL_AUTH_AVAILABLE:
-        return jsonify({"success": False, "message": "Facial authentication not available"})
-    
-    try:
-        data = request.get_json()
-        name = data.get('name')
-        image_data = data.get('image')
-        
-        if not name or not image_data:
-            return jsonify({"success": False, "message": "Name and image required"})
-        
-        result = facial_auth.create_admin_user(name, image_data)
-        return jsonify(result)
-        
-    except Exception as e:
-        logger.error(f"Admin setup error: {e}")
-        return jsonify({"success": False, "message": f"Setup error: {str(e)}"})
+    return jsonify({
+        "success": False, 
+        "message": "Admin setup temporarily disabled for deployment. Please try the basic database queries for now."
+    })
 
-# Facial Authentication Routes
 @app.route('/facial-auth', methods=['POST'])
 def authenticate_face():
     """Authenticate user via facial recognition"""
-    if not FACIAL_AUTH_AVAILABLE:
-        return jsonify({"success": False, "message": "Facial authentication not available"})
-    
-    try:
-        data = request.get_json()
-        image_data = data.get('image')
-        
-        if not image_data:
-            return jsonify({"success": False, "message": "No image provided"})
-        
-        result = facial_auth.authenticate_face(image_data)
-        
-        # Log authentication attempt
-        facial_auth.log_access(
-            user_id=result.get('user', {}).get('id') if result.get('user') else None,
-            user_name=result.get('user', {}).get('name') if result.get('user') else 'Unknown',
-            access_type='authentication',
-            query='face_auth',
-            ip_address=request.remote_addr,
-            success=result['success']
-        )
-        
-        return jsonify(result)
-        
-    except Exception as e:
-        logger.error(f"Facial authentication error: {e}")
-        return jsonify({"success": False, "message": f"Server error: {str(e)}"})
+    return jsonify({
+        "success": False, 
+        "message": "Facial authentication temporarily disabled for deployment. Please try the basic database queries for now."
+    })
 
 @app.route('/add-user', methods=['POST'])
 def add_user():
     """Add new authorized user"""
-    if not FACIAL_AUTH_AVAILABLE:
-        return jsonify({"success": False, "message": "Facial authentication not available"})
-    
-    try:
-        data = request.get_json()
-        name = data.get('name')
-        role = data.get('role', 'read-only')
-        image_data = data.get('image')
-        
-        if not all([name, image_data]):
-            return jsonify({"success": False, "message": "Name and image required"})
-        
-        if role not in ['admin', 'read-only']:
-            return jsonify({"success": False, "message": "Invalid role"})
-        
-        result = facial_auth.add_authorized_user(name, role, image_data)
-        return jsonify(result)
-        
-    except Exception as e:
-        logger.error(f"Add user error: {e}")
-        return jsonify({"success": False, "message": f"Server error: {str(e)}"})
+    return jsonify({
+        "success": False, 
+        "message": "User management temporarily disabled for deployment. Please try the basic database queries for now."
+    })
 
 @app.route('/users', methods=['GET'])
 def get_users():
     """Get list of authorized users"""
-    if not FACIAL_AUTH_AVAILABLE:
-        return jsonify({"success": False, "message": "Facial authentication not available"})
-    
-    try:
-        users = facial_auth.get_authorized_users()
-        return jsonify({"success": True, "users": users})
-    except Exception as e:
-        logger.error(f"Get users error: {e}")
-        return jsonify({"success": False, "message": f"Server error: {str(e)}"})
+    return jsonify({
+        "success": False, 
+        "message": "User management temporarily disabled for deployment. Please try the basic database queries for now."
+    })
 
 @app.route('/secure-query', methods=['POST'])
 def secure_database_query():
     """Execute database query with facial authentication"""
-    if not FACIAL_AUTH_AVAILABLE:
-        return jsonify({"success": False, "message": "Facial authentication not available"})
-    
+    # For now, redirect to regular query endpoint
     try:
         data = request.get_json()
         query = data.get('query')
-        user_data = data.get('user')
-        permission_level = data.get('permission_level', 'read-only')
         
         if not query:
             return jsonify({"success": False, "message": "Query required"})
         
-        # Check permission
-        permission_check = facial_auth.check_query_permission(query, permission_level)
-        if not permission_check['allowed']:
-            facial_auth.log_access(
-                user_id=user_data.get('id') if user_data else None,
-                user_name=user_data.get('name') if user_data else 'Unknown',
-                access_type='query_denied',
-                query=query,
-                ip_address=request.remote_addr,
-                success=False
-            )
-            return jsonify({
-                "success": False, 
-                "message": permission_check['message'],
-                "error": "permission_denied"
-            })
-        
-        # Use existing database assistant
+        # Use regular query handling temporarily
         if DB_AVAILABLE:
             response_data = db_assistant.execute_query_and_get_results(query)
-            
-            # Check if user asked for a chart and we have data
-            if (facial_auth.should_generate_chart(query) and 
-                response_data.get('data') and 
-                len(response_data['data']) > 0):
-                
-                # Generate chart image
-                try:
-                    chart_base64 = db_assistant.create_chart_from_data(response_data['data'], query)
-                    response_data['chart_image'] = chart_base64
-                    response_data['message'] += '\n\nChart generated successfully!'
-                except Exception as e:
-                    logger.error(f"Chart generation failed: {e}")
-            
-            # Log successful query
-            facial_auth.log_access(
-                user_id=user_data.get('id') if user_data else None,
-                user_name=user_data.get('name') if user_data else 'Anonymous',
-                access_type='query_success',
-                query=query,
-                ip_address=request.remote_addr,
-                success=True
-            )
-            
             return jsonify(response_data)
         else:
             return jsonify({"success": False, "message": "Database not available"})
         
     except Exception as e:
-        logger.error(f"Secure query error: {e}")
+        logger.error(f"Query error: {e}")
         return jsonify({"success": False, "message": f"Server error: {str(e)}"})
 
 if __name__ == '__main__':
