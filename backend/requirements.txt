@@ -28,7 +28,3 @@ python-dotenv==1.0.0
 
 # Utilities
 Pillow==10.1.0
-
-# Image processing - more reliable on Railway
-opencv-python-headless==4.9.0.80
-scikit-image==0.22.0
