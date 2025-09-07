@@ -5,8 +5,6 @@ import os
 import sys
 import traceback
 
-
-
 # Setup logging first
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -116,12 +114,12 @@ def health_check():
         'version': '2.0',
         'database_available': DB_AVAILABLE,
         'ai_available': AI_AVAILABLE,
-        'facial_auth_available': FACIAL_AUTH_AVAILABLE,  # Add this line
+        'facial_auth_available': FACIAL_AUTH_AVAILABLE,
         'capabilities': [
             'Database queries with charts',
             'General AI questions', 
             'Intelligent question routing',
-            'Facial recognition authentication'  # Add this line
+            'Facial recognition authentication'
         ]
     })
 
@@ -226,6 +224,48 @@ def handle_query():
             'data': [],
             'chart': None
         }), 500
+
+# NEW: Missing endpoints that your Flutter app needs
+@app.route('/authenticate', methods=['POST'])
+def authenticate():
+    """Authenticate user with facial recognition"""
+    if not FACIAL_AUTH_AVAILABLE:
+        return jsonify({"success": False, "message": "Facial authentication not available"})
+    
+    try:
+        data = request.get_json()
+        image_data = data.get('image')
+        
+        if not image_data:
+            return jsonify({"success": False, "message": "Image required"})
+        
+        result = facial_auth.authenticate_user(image_data)
+        return jsonify(result)
+        
+    except Exception as e:
+        logger.error(f"Authentication error: {e}")
+        return jsonify({"success": False, "message": f"Authentication error: {str(e)}"})
+
+@app.route('/setup-admin', methods=['POST'])
+def setup_admin():
+    """Setup admin user with facial recognition"""
+    if not FACIAL_AUTH_AVAILABLE:
+        return jsonify({"success": False, "message": "Facial authentication not available"})
+    
+    try:
+        data = request.get_json()
+        name = data.get('name')
+        image_data = data.get('image')
+        
+        if not name or not image_data:
+            return jsonify({"success": False, "message": "Name and image required"})
+        
+        result = facial_auth.create_admin_user(name, image_data)
+        return jsonify(result)
+        
+    except Exception as e:
+        logger.error(f"Admin setup error: {e}")
+        return jsonify({"success": False, "message": f"Setup error: {str(e)}"})
 
 # Facial Authentication Routes
 @app.route('/facial-auth', methods=['POST'])
@@ -363,7 +403,6 @@ def secure_database_query():
     except Exception as e:
         logger.error(f"Secure query error: {e}")
         return jsonify({"success": False, "message": f"Server error: {str(e)}"})
- 
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
