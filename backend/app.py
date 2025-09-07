@@ -4,84 +4,146 @@ import logging
 import os
 import sys
 import traceback
+import time
 
-# Setup logging first
-logging.basicConfig(level=logging.INFO)
+# Setup detailed logging
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout)
+    ]
+)
 logger = logging.getLogger(__name__)
+
+print("="*50)
+print("STARTING APPLICATION...")
+print("="*50)
 
 app = Flask(__name__)
 CORS(app)
 
-# RE-ENABLE FACIAL AUTH FOR PRODUCTION
+print("Flask app created successfully")
+
+# Check environment variables first
+print("="*50)
+print("CHECKING ENVIRONMENT VARIABLES...")
+print("="*50)
+
+required_vars = ["GOOGLE_API_KEY", "DB_NAME", "DB_USER", "DB_PASSWORD", "DB_HOST", "DB_PORT"]
+for var in required_vars:
+    value = os.getenv(var)
+    if value:
+        print(f"{var}: {'*' * len(value[:10])}... (length: {len(value)})")
+    else:
+        print(f"{var}: NOT SET")
+
+# Initialize facial auth with error handling
+print("="*50)
+print("INITIALIZING FACIAL AUTHENTICATION...")
+print("="*50)
+
+FACIAL_AUTH_AVAILABLE = False
+facial_auth = None
+
 try:
+    print("Attempting to import facial_auth...")
     from facial_auth import FacialAuthSystem
+    print("facial_auth imported successfully")
+    
+    print("Attempting to initialize FacialAuthSystem...")
     facial_auth = FacialAuthSystem()
+    print("FacialAuthSystem initialized successfully")
+    
     FACIAL_AUTH_AVAILABLE = True
-    print("Facial Authentication enabled successfully")
+    print("Facial Authentication: ENABLED")
+except ImportError as e:
+    print(f"ImportError in facial_auth: {e}")
+    print(f"Full traceback: {traceback.format_exc()}")
+    FACIAL_AUTH_AVAILABLE = False
 except Exception as e:
-    print(f"Failed to initialize Facial Authentication: {e}")
+    print(f"Unexpected error in facial_auth: {e}")
+    print(f"Full traceback: {traceback.format_exc()}")
     FACIAL_AUTH_AVAILABLE = False
 
-# Try to import database assistant with detailed error logging
-print("=== IMPORTING DATABASE ASSISTANT ===")
+# Initialize database assistant with error handling
+print("="*50)
+print("INITIALIZING DATABASE ASSISTANT...")
+print("="*50)
+
+DB_AVAILABLE = False
+db_assistant = None
+
 try:
+    print("Attempting to import DatabaseAssistant...")
     from db_assistant import DatabaseAssistant
     print("DatabaseAssistant imported successfully")
+    
+    print("Attempting to initialize DatabaseAssistant...")
+    db_assistant = DatabaseAssistant()
+    print("DatabaseAssistant initialized successfully")
+    
     DB_AVAILABLE = True
+    print("Database Assistant: ENABLED")
 except ImportError as e:
-    print(f"ImportError: Could not import DatabaseAssistant: {e}")
+    print(f"ImportError in db_assistant: {e}")
     print(f"Full traceback: {traceback.format_exc()}")
     DB_AVAILABLE = False
 except Exception as e:
-    print(f"Unexpected error importing DatabaseAssistant: {e}")
+    print(f"Unexpected error in db_assistant: {e}")
     print(f"Full traceback: {traceback.format_exc()}")
     DB_AVAILABLE = False
 
-# Try to initialize database assistant
-db_assistant = None
-if DB_AVAILABLE:
-    print("=== INITIALIZING DATABASE ASSISTANT ===")
-    try:
-        db_assistant = DatabaseAssistant()
-        print("DatabaseAssistant initialized successfully")
-        logger.info("DatabaseAssistant initialized successfully")
-    except Exception as e:
-        print(f"Failed to initialize DatabaseAssistant: {e}")
-        print(f"Full traceback: {traceback.format_exc()}")
-        logger.error(f"Failed to initialize DatabaseAssistant: {e}")
-        DB_AVAILABLE = False
+# Initialize Gemini AI with error handling
+print("="*50)
+print("INITIALIZING GEMINI AI...")
+print("="*50)
 
-# Try to initialize Gemini AI with detailed error logging
-print("=== INITIALIZING GEMINI AI ===")
+AI_AVAILABLE = False
+gemini_model = None
+
 try:
+    print("Attempting to import google.generativeai...")
     import google.generativeai as genai
     print("google.generativeai imported successfully")
     
     gemini_api_key = os.getenv("GOOGLE_API_KEY")
     if gemini_api_key:
         print(f"GOOGLE_API_KEY found (length: {len(gemini_api_key)})")
+        
+        print("Configuring genai with API key...")
         genai.configure(api_key=gemini_api_key)
+        
+        print("Creating GenerativeModel...")
         gemini_model = genai.GenerativeModel('gemini-1.5-flash')
         
-        # Test the connection
-        test_response = gemini_model.generate_content("Test")
-        print("Gemini AI test successful")
+        print("Testing Gemini connection...")
+        test_response = gemini_model.generate_content("Test", 
+            generation_config=genai.types.GenerationConfig(
+                temperature=0.1,
+                max_output_tokens=10
+            ))
+        print(f"Gemini test response: {test_response.text[:50]}...")
+        
         AI_AVAILABLE = True
-        logger.info("Gemini AI initialized successfully")
+        print("Gemini AI: ENABLED")
     else:
-        print("GOOGLE_API_KEY not found in environment variables")
+        print("GOOGLE_API_KEY not found in environment")
         AI_AVAILABLE = False
-        logger.warning("GOOGLE_API_KEY not found - AI features disabled")
+        print("Gemini AI: DISABLED (no API key)")
+        
 except Exception as e:
-    print(f"Failed to initialize Gemini AI: {e}")
+    print(f"Error in Gemini AI initialization: {e}")
     print(f"Full traceback: {traceback.format_exc()}")
     AI_AVAILABLE = False
-    logger.error(f"Failed to initialize Gemini AI: {e}")
 
-print(f"=== INITIALIZATION COMPLETE ===")
+print("="*50)
+print("INITIALIZATION COMPLETE")
+print("="*50)
 print(f"DB_AVAILABLE: {DB_AVAILABLE}")
 print(f"AI_AVAILABLE: {AI_AVAILABLE}")
 print(f"FACIAL_AUTH_AVAILABLE: {FACIAL_AUTH_AVAILABLE}")
+print("="*50)
 
 def is_database_question(query):
     """Determine if question is database-related"""
@@ -90,7 +152,6 @@ def is_database_question(query):
         'profit', 'data', 'record', 'count', 'total', 'average', 
         'chart', 'graph', 'report', 'analysis', 'database', 'table'
     ]
-    
     query_lower = query.lower()
     return any(keyword in query_lower for keyword in database_keywords)
 
@@ -118,28 +179,65 @@ def requires_admin_permission(query):
 
 @app.route('/')
 def health_check():
-    """Health check endpoint"""
+    """Health check endpoint with detailed status"""
+    print("Health check endpoint called")
     return jsonify({
         'status': 'healthy',
         'message': 'Smart AI Database Assistant is running!',
-        'version': '2.1',
+        'version': '2.1-debug',
+        'timestamp': time.time(),
         'database_available': DB_AVAILABLE,
         'ai_available': AI_AVAILABLE,
         'facial_auth_available': FACIAL_AUTH_AVAILABLE,
+        'environment': {
+            'python_version': sys.version,
+            'port': os.environ.get('PORT', 'Not set'),
+            'railway_env': os.environ.get('RAILWAY_ENVIRONMENT', 'Not Railway')
+        },
         'capabilities': [
-            'Database queries with charts',
-            'General AI questions', 
-            'Intelligent question routing',
-            'Facial recognition authentication'
+            'Database queries with charts' if DB_AVAILABLE else 'Database: OFFLINE',
+            'General AI questions' if AI_AVAILABLE else 'AI: OFFLINE', 
+            'Facial recognition authentication' if FACIAL_AUTH_AVAILABLE else 'Facial Auth: OFFLINE'
         ]
+    })
+
+@app.route('/debug', methods=['GET'])
+def debug_info():
+    """Debug endpoint to show detailed system information"""
+    return jsonify({
+        'system_info': {
+            'python_version': sys.version,
+            'working_directory': os.getcwd(),
+            'environment_variables': {k: ('SET' if v else 'NOT SET') for k, v in {
+                'GOOGLE_API_KEY': os.getenv('GOOGLE_API_KEY'),
+                'DB_NAME': os.getenv('DB_NAME'),
+                'DB_USER': os.getenv('DB_USER'),
+                'DB_PASSWORD': os.getenv('DB_PASSWORD'),
+                'DB_HOST': os.getenv('DB_HOST'),
+                'DB_PORT': os.getenv('DB_PORT'),
+                'PORT': os.getenv('PORT'),
+                'RAILWAY_ENVIRONMENT': os.getenv('RAILWAY_ENVIRONMENT')
+            }.items()},
+        },
+        'component_status': {
+            'database': DB_AVAILABLE,
+            'ai': AI_AVAILABLE,
+            'facial_auth': FACIAL_AUTH_AVAILABLE
+        },
+        'file_check': {
+            'facial_auth_py': os.path.exists('facial_auth.py'),
+            'db_assistant_py': os.path.exists('db_assistant.py'),
+            'requirements_txt': os.path.exists('requirements.txt')
+        }
     })
 
 @app.route('/query', methods=['POST'])
 def handle_query():
     """Handle both database and general queries intelligently"""
     try:
-        data = request.get_json()
+        print(f"Query endpoint called at {time.time()}")
         
+        data = request.get_json()
         if not data or 'query' not in data:
             return jsonify({
                 'error': 'No query provided',
@@ -150,6 +248,7 @@ def handle_query():
             }), 400
 
         user_query = data['query'].strip()
+        print(f"Processing query: {user_query}")
         
         if not user_query:
             return jsonify({
@@ -160,9 +259,7 @@ def handle_query():
                 'chart': None
             }), 400
 
-        logger.info(f"Processing query: {user_query}")
-        
-        # Check if this requires admin permissions and user is authenticated
+        # Check if this requires admin permissions
         if requires_admin_permission(user_query):
             return jsonify({
                 'error': 'Admin permission required',
@@ -176,18 +273,16 @@ def handle_query():
         # Determine if this is a database question
         if is_database_question(user_query) and DB_AVAILABLE:
             try:
-                # Use the comprehensive database assistant method that returns structured data
-                logger.info("Processing as database query with structured response")
-                
+                print("Processing as database query")
                 response_data = db_assistant.execute_query_and_get_results(user_query)
                 return jsonify(response_data)
                 
             except Exception as db_error:
-                logger.error(f"Database query failed: {db_error}")
+                print(f"Database query failed: {db_error}")
                 
                 # Fallback to AI if database fails
                 if AI_AVAILABLE:
-                    logger.info("Database failed, falling back to AI")
+                    print("Database failed, falling back to AI")
                     ai_response = get_ai_response(user_query)
                     return jsonify({
                         'response': f"Database temporarily unavailable. Here's what I can tell you: {ai_response}",
@@ -208,11 +303,10 @@ def handle_query():
                         'data': [],
                         'chart': None
                     })
-        
         else:
             # Handle general questions with AI
             if AI_AVAILABLE:
-                logger.info("Processing as general AI query")
+                print("Processing as general AI query")
                 ai_response = get_ai_response(user_query)
                 return jsonify({
                     'response': ai_response,
@@ -234,7 +328,8 @@ def handle_query():
                 })
 
     except Exception as e:
-        logger.error(f"Error processing query: {e}")
+        print(f"Error processing query: {e}")
+        print(f"Full traceback: {traceback.format_exc()}")
         return jsonify({
             'error': 'Internal server error',
             'response': f'Sorry, there was an error processing your request: {str(e)}',
@@ -244,7 +339,7 @@ def handle_query():
             'chart': None
         }), 500
 
-# FACIAL AUTH ENDPOINTS - RE-ENABLED
+# Minimal auth endpoints to prevent startup failures
 @app.route('/authenticate', methods=['POST'])
 def authenticate():
     """Authenticate user with facial recognition"""
@@ -257,255 +352,38 @@ def authenticate():
     try:
         data = request.get_json()
         if not data or 'image' not in data:
-            return jsonify({
-                "success": False,
-                "message": "Image data required"
-            })
+            return jsonify({"success": False, "message": "Image data required"})
         
-        image_data = data['image']
-        result = facial_auth.authenticate_user(image_data)
-        
-        # Log authentication attempt
-        if 'user' in result:
-            facial_auth.log_access(
-                result['user']['id'],
-                result['user']['name'],
-                'authentication',
-                None,
-                request.remote_addr,
-                result['success']
-            )
-        
+        result = facial_auth.authenticate_user(data['image'])
         return jsonify(result)
         
     except Exception as e:
-        logger.error(f"Authentication error: {e}")
-        return jsonify({
-            "success": False,
-            "message": f"Authentication failed: {str(e)}"
-        })
+        print(f"Authentication error: {e}")
+        return jsonify({"success": False, "message": f"Authentication failed: {str(e)}"})
 
 @app.route('/setup-admin', methods=['POST'])
 def setup_admin():
-    """Setup admin user with facial recognition"""
+    """Setup admin user"""
     if not FACIAL_AUTH_AVAILABLE:
-        return jsonify({
-            "success": False, 
-            "message": "Facial authentication is not available"
-        })
+        return jsonify({"success": False, "message": "Facial authentication is not available"})
     
     try:
         data = request.get_json()
         if not data or 'name' not in data or 'image' not in data:
-            return jsonify({
-                "success": False,
-                "message": "Name and image data required"
-            })
+            return jsonify({"success": False, "message": "Name and image data required"})
         
-        name = data['name']
-        image_data = data['image']
-        
-        result = facial_auth.create_admin_user(name, image_data)
-        
-        # Log admin creation attempt
-        facial_auth.log_access(
-            result.get('user_id', 'unknown'),
-            name,
-            'admin_setup',
-            None,
-            request.remote_addr,
-            result['success']
-        )
-        
+        result = facial_auth.create_admin_user(data['name'], data['image'])
         return jsonify(result)
         
     except Exception as e:
-        logger.error(f"Admin setup error: {e}")
-        return jsonify({
-            "success": False,
-            "message": f"Admin setup failed: {str(e)}"
-        })
+        print(f"Admin setup error: {e}")
+        return jsonify({"success": False, "message": f"Admin setup failed: {str(e)}"})
 
-@app.route('/facial-auth', methods=['POST'])
-def authenticate_face():
-    """Authenticate user via facial recognition"""
-    return authenticate()  # Use the same logic as /authenticate
-
-@app.route('/add-user', methods=['POST'])
-def add_user():
-    """Add new authorized user"""
-    if not FACIAL_AUTH_AVAILABLE:
-        return jsonify({
-            "success": False, 
-            "message": "Facial authentication is not available"
-        })
-    
-    try:
-        data = request.get_json()
-        if not data or 'name' not in data or 'image' not in data:
-            return jsonify({
-                "success": False,
-                "message": "Name and image data required"
-            })
-        
-        name = data['name']
-        image_data = data['image']
-        role = data.get('role', 'read_only')
-        
-        result = facial_auth.add_authorized_user(name, role, image_data)
-        
-        # Log user addition attempt
-        facial_auth.log_access(
-            result.get('user_id', 'unknown'),
-            name,
-            'user_creation',
-            None,
-            request.remote_addr,
-            result['success']
-        )
-        
-        return jsonify(result)
-        
-    except Exception as e:
-        logger.error(f"Add user error: {e}")
-        return jsonify({
-            "success": False,
-            "message": f"Failed to add user: {str(e)}"
-        })
-
-@app.route('/users', methods=['GET'])
-def get_users():
-    """Get list of authorized users"""
-    if not FACIAL_AUTH_AVAILABLE:
-        return jsonify({
-            "success": False, 
-            "message": "Facial authentication is not available"
-        })
-    
-    try:
-        users = facial_auth.get_authorized_users()
-        return jsonify({
-            "success": True,
-            "users": users
-        })
-        
-    except Exception as e:
-        logger.error(f"Get users error: {e}")
-        return jsonify({
-            "success": False,
-            "message": f"Failed to get users: {str(e)}"
-        })
-
-@app.route('/secure-query', methods=['POST'])
-def secure_database_query():
-    """Execute database query with facial authentication"""
-    if not FACIAL_AUTH_AVAILABLE:
-        return jsonify({
-            "success": False, 
-            "message": "Facial authentication is not available"
-        })
-    
-    try:
-        data = request.get_json()
-        
-        if not data or 'query' not in data or 'image' not in data:
-            return jsonify({
-                "success": False,
-                "message": "Query and image data required"
-            })
-        
-        query = data['query']
-        image_data = data['image']
-        
-        # Authenticate user first
-        auth_result = facial_auth.authenticate_user(image_data)
-        
-        if not auth_result['success']:
-            return jsonify({
-                "success": False,
-                "message": "Authentication failed: " + auth_result['message']
-            })
-        
-        user = auth_result['user']
-        permission_level = auth_result['permission_level']
-        
-        # Check query permissions
-        permission_check = facial_auth.check_query_permission(query, permission_level)
-        
-        if not permission_check['allowed']:
-            # Log unauthorized attempt
-            facial_auth.log_access(
-                user['id'],
-                user['name'],
-                'unauthorized_query',
-                query,
-                request.remote_addr,
-                False
-            )
-            
-            return jsonify({
-                "success": False,
-                "message": permission_check['message']
-            })
-        
-        # Execute query if authorized
-        if DB_AVAILABLE:
-            response_data = db_assistant.execute_query_and_get_results(query)
-            
-            # Log successful query
-            facial_auth.log_access(
-                user['id'],
-                user['name'],
-                'secure_query',
-                query,
-                request.remote_addr,
-                response_data['success']
-            )
-            
-            # Add user info to response
-            response_data['authenticated_user'] = user['name']
-            response_data['permission_level'] = permission_level
-            
-            return jsonify(response_data)
-        else:
-            return jsonify({
-                "success": False,
-                "message": "Database not available"
-            })
-        
-    except Exception as e:
-        logger.error(f"Secure query error: {e}")
-        return jsonify({
-            "success": False,
-            "message": f"Server error: {str(e)}"
-        })
-
-@app.route('/system-status', methods=['GET'])
-def get_system_status():
-    """Get system status"""
-    try:
-        status = {
-            'database_available': DB_AVAILABLE,
-            'ai_available': AI_AVAILABLE,
-            'facial_auth_available': FACIAL_AUTH_AVAILABLE
-        }
-        
-        if FACIAL_AUTH_AVAILABLE:
-            auth_status = facial_auth.get_system_status()
-            status.update(auth_status)
-        
-        return jsonify({
-            'success': True,
-            'status': status
-        })
-        
-    except Exception as e:
-        logger.error(f"System status error: {e}")
-        return jsonify({
-            'success': False,
-            'message': f'Failed to get system status: {str(e)}'
-        })
+print("="*50)
+print("FLASK APP SETUP COMPLETE")
+print("="*50)
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
+    print(f"Starting Flask app on port {port}")
     app.run(host='0.0.0.0', port=port, debug=False)
