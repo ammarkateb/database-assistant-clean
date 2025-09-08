@@ -1,175 +1,1738 @@
-from flask import Flask, request, jsonify
-from flask_cors import CORS
-import logging
-import os
-import sys
-import traceback
+#!/usr/bin/env python
+# coding: utf-8
 
-app = Flask(__name__)
-CORS(app)
+# In[ ]:
+
+import base64
+import io
+from typing import Optional, Dict, Any
+import pandas as pd
+import psycopg2
+from psycopg2.pool import SimpleConnectionPool
+import matplotlib.pyplot as plt
+import seaborn as sns
+import warnings
+import google.generativeai as genai
+import re
+import speech_recognition as sr
+from datetime import datetime, timedelta
+from spellchecker import SpellChecker
+from dotenv import load_dotenv
+import os
+import logging
+import json
+from typing import Optional, Tuple, Dict, Any, List
+import hashlib
+import time
+from contextlib import contextmanager
+from dataclasses import dataclass
 
 # Setup logging
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('db_assistant.log'),
+        logging.StreamHandler()
+    ]
 )
 logger = logging.getLogger(__name__)
 
-# Global instance
-db_assistant = None
+# Ignore pandas warnings
+warnings.filterwarnings('ignore', category=UserWarning)
+plt.style.use('seaborn-v0_8')
+sns.set_palette("husl")
 
-def initialize_assistant():
-    """Initialize the database assistant with better error handling"""
-    global db_assistant
-    try:
-        if db_assistant is None:
-            # Import here to avoid import issues
-            sys.path.append(os.path.dirname(__file__))
-            
-            # Try to import your database assistant
-            try:
-                from db_assistant import DatabaseAssistant  # Change this to match your actual file
-                db_assistant = DatabaseAssistant()
-                logger.info("Database Assistant initialized successfully")
-                return True
-            except ImportError as e:
-                logger.error(f"Import error: {e}")
-                # Fallback - create a mock assistant for testing
-                db_assistant = MockDatabaseAssistant()
-                logger.warning("Using mock assistant due to import issues")
-                return True
+@dataclass
+class ConversationContext:
+    """Track conversation context for human-like understanding"""
+    last_query: str = ""
+    last_results: Optional[pd.DataFrame] = None
+    last_question: str = ""
+    last_chart_type: Optional[str] = None
+    awaiting_chart_choice: bool = False
+    awaiting_confirmation: bool = False
+    previous_topics: List[str] = None
+    user_preferences: Dict[str, Any] = None
+    
+    def __post_init__(self):
+        if self.previous_topics is None:
+            self.previous_topics = []
+        if self.user_preferences is None:
+            self.user_preferences = {'chart_style': 'modern', 'verbosity': 'normal'}
+
+class ResponseHandler:
+    """Handle different types of responses appropriately"""
+    
+    def __init__(self):
+        self.simple_responses = {
+            'vague_chart': [
+                "I'd love to make you a chart! What data should I put in it?",
+                "A chart sounds great! What would you like me to show?",
+                "Charts are fun! What information should I visualize?"
+            ],
+            'missing_months': [
+                "You want to see all 12 months? Let me fix that for you!",
+                "Ah, you want the complete picture! I'll include all months.",
+                "Good catch! Let me show you the full year."
+            ],
+            'need_clarification': [
+                "I need a bit more info to help you properly.",
+                "Could you tell me what specific data you want to see?",
+                "What would you like me to focus on?"
+            ]
+        }
+    
+    def get_helpful_response(self, situation: str, context: str = "") -> str:
+        """Get a helpful response for common situations"""
+        import random
+        
+        if situation == 'vague_chart':
+            response = random.choice(self.simple_responses['vague_chart'])
+            suggestions = [
+                "Sales by month",
+                "Customers by city", 
+                "Top selling products",
+                "Revenue over time"
+            ]
+            return f"{response}\n\nHere are some ideas:\n" + "\n".join(f"• {s}" for s in suggestions)
+        
+        elif situation == 'missing_months':
+            return random.choice(self.simple_responses['missing_months'])
+        
+        elif situation == 'need_clarification':
+            return random.choice(self.simple_responses['need_clarification'])
+        
+        return "I'm not sure what you mean. Could you explain a bit more?"
+
+class HumanLikeUnderstanding:
+    """Enhanced natural language understanding for human-like interactions"""
+    
+    def __init__(self):
+        self.chart_keywords = {
+            'pie': ['pie', 'circular', 'circle', 'donut', 'wheel', 'round'],
+            'bar': ['bar', 'column', 'bars', 'columns', 'vertical', 'histogram'],
+            'line': ['line', 'trend', 'time', 'timeline', 'over time', 'progression'],
+            'scatter': ['scatter', 'plot', 'points', 'correlation', 'relationship']
+        }
+        
+        self.intent_patterns = {
+            'vague_chart_request': [
+                r'^(what about|how about)\s+(a\s+)?(pie|bar|line|scatter)\s*(chart)?$',
+                r'^(pie|bar|line|scatter)\s*(chart)?$',
+                r'^(chart|graph|plot)$'
+            ],
+            'chart_request': [
+                r'\b(show|display|plot|chart|graph|visualize)\b.*\b(pie|bar|line|scatter)\b',
+                r'\b(pie|bar|line|scatter)\b.*\b(chart|graph)\b',
+                r'(as|in|with)\s+(chart|graph)',
+                r'\b(make|create|draw)\b.*\b(chart|graph)\b'
+            ],
+            'same_data_different_viz': [
+                r'^(change|switch|convert)\s+to\s+(pie|bar|line|scatter)',
+                r'^(make|show)\s+it\s+(as\s+)?(pie|bar|line|scatter)',
+                r'^(different|another)\s+(chart|visualization)'
+            ],
+            'missing_data_complaint': [
+                r'why.*not.*all',
+                r'missing.*months',
+                r'where.*rest',
+                r'incomplete.*data',
+                r"didn't.*give.*all"
+            ],
+            'more_details': [
+                r'^(more|details|expand|elaborate|explain)',
+                r'(tell me more|show more|give me more)',
+                r'(what about|how about|what if)',
+                r'^(why|how|when|where)'
+            ],
+            'follow_up': [
+                r'^(and|also|plus|additionally)',
+                r'(what about|how about)',
+                r'(for the same|using the same)',
+                r'^(now\s+)?(show|tell|find)'
+            ],
+            'simple_answer': [
+                r'^\s*(yes|yeah|yep|ok|okay|sure|fine)\s*$',
+                r'^\s*(no|nope|not really|never mind)\s*$'
+            ]
+        }
+        
+        self.context_clues = {
+            'temporal': ['today', 'yesterday', 'last week', 'this month', 'recent', 'latest'],
+            'comparison': ['compare', 'vs', 'versus', 'against', 'difference between'],
+            'ranking': ['top', 'best', 'worst', 'lowest', 'highest', 'rank', 'order by'],
+            'aggregation': ['total', 'sum', 'average', 'count', 'max', 'min', 'group by']
+        }
+
+    def classify_intent(self, user_input: str, context: ConversationContext) -> str:
+        """Classify user intent based on input and context"""
+        user_input_lower = user_input.lower().strip()
+        
+        # Check for vague chart requests first
+        for pattern in self.intent_patterns['vague_chart_request']:
+            if re.search(pattern, user_input_lower):
+                return 'vague_chart_request'
+        
+        # Check for missing data complaints
+        for pattern in self.intent_patterns['missing_data_complaint']:
+            if re.search(pattern, user_input_lower):
+                return 'missing_data_complaint'
+        
+        # Check for simple chart type requests when we just showed results
+        if context.last_results is not None and not context.last_results.empty:
+            # Direct chart type mention
+            for chart_type, keywords in self.chart_keywords.items():
+                if any(keyword in user_input_lower for keyword in keywords):
+                    if len(user_input_lower.split()) <= 3:  # Short requests like "pie chart"
+                        return f'chart_request_{chart_type}'
+        
+        # Check other intent patterns
+        for intent, patterns in self.intent_patterns.items():
+            for pattern in patterns:
+                if re.search(pattern, user_input_lower):
+                    return intent
+        
+        # Default to new query
+        return 'new_query'
+    
+    def extract_chart_type(self, user_input: str) -> Optional[str]:
+        """Extract chart type from user input"""
+        user_input_lower = user_input.lower()
+        
+        for chart_type, keywords in self.chart_keywords.items():
+            if any(keyword in user_input_lower for keyword in keywords):
+                return chart_type
+        
+        return None
+    
+    def understand_reference(self, user_input: str, context: ConversationContext) -> str:
+        """Understand references to previous results or context"""
+        pronouns = ['it', 'this', 'that', 'these', 'those', 'them', 'they']
+        user_lower = user_input.lower()
+        
+        # If user references previous results
+        if any(pronoun in user_lower for pronoun in pronouns) and context.last_results is not None:
+            # Replace pronouns with context
+            if context.last_question:
+                return f"Using the results from '{context.last_question}', {user_input}"
+        
+        return user_input
+
+class SmartQueryGenerator:
+    """Generate appropriate SQL or responses based on context"""
+    
+    def __init__(self, model, enhanced_prompt):
+        self.model = model
+        self.enhanced_prompt = enhanced_prompt
+        self.response_handler = ResponseHandler()
+    
+    def should_generate_sql(self, user_input: str, intent: str) -> bool:
+        """Determine if we should generate SQL or provide a conversational response"""
+        
+        # Don't generate SQL for these intents
+        non_sql_intents = [
+            'vague_chart_request',
+            'missing_data_complaint', 
+            'simple_answer'
+        ]
+        
+        if intent in non_sql_intents:
+            return False
+        
+        # Don't generate SQL for very short, unclear inputs
+        if len(user_input.strip().split()) <= 2 and intent == 'new_query':
+            return False
+        
         return True
-    except Exception as e:
-        logger.error(f"Failed to initialize assistant: {e}")
-        logger.error(f"Traceback: {traceback.format_exc()}")
-        return False
+    
+    def handle_non_sql_response(self, user_input: str, intent: str, context: ConversationContext) -> str:
+        """Handle responses that don't need SQL"""
+        
+        if intent == 'vague_chart_request':
+            return self.response_handler.get_helpful_response('vague_chart')
+        
+        elif intent == 'missing_data_complaint':
+            # If they're asking about missing months and we have recent results
+            if context.last_results is not None:
+                return "Let me rerun that query to include all months for you!"
+            else:
+                return self.response_handler.get_helpful_response('missing_months')
+        
+        elif intent == 'simple_answer':
+            if context.awaiting_chart_choice:
+                return "Which type of chart would you like? (pie, bar, line, scatter)"
+            else:
+                return "I'm here to help! What would you like to know about your data?"
+        
+        else:
+            return self.response_handler.get_helpful_response('need_clarification')
+    
+    def generate_sql_with_complete_months(self, base_query: str) -> str:
+        """Modify query to ensure all months are included"""
+        
+        # Check if this is a monthly query that might be missing months
+        if 'month' in base_query.lower() and 'group by' in base_query.lower():
+            
+            # Enhanced prompt for complete month coverage
+            month_prompt = f"""{self.enhanced_prompt}
 
-class MockDatabaseAssistant:
-    """Mock assistant for testing when imports fail"""
-    def get_response_from_db_assistant(self, query):
-        return f"Mock response for: {query}. Database assistant is not fully configured yet."
+IMPORTANT: When generating queries that show data by month, ALWAYS ensure ALL 12 months are included, even if some months have zero values. Use a CTE or similar approach to generate all months first.
 
-@app.route('/', methods=['GET'])
-def health_check():
-    """Health check endpoint"""
-    return jsonify({
-        "status": "healthy",
-        "message": "Database Assistant API is running!",
-        "version": "1.0",
-        "python_version": sys.version
-    })
+Example pattern:
+```sql
+WITH all_months AS (
+    SELECT TO_CHAR(generate_series('2024-01-01'::date, '2024-12-01'::date, '1 month'::interval), 'YYYY-MM') AS month
+),
+monthly_data AS (
+    -- Your original query here
+)
+SELECT am.month, COALESCE(md.value, 0) as value
+FROM all_months am
+LEFT JOIN monthly_data md ON am.month = md.month
+ORDER BY am.month;
+```
 
-@app.route('/query', methods=['POST'])
-def handle_query():
-    """Handle database queries from Flutter app"""
-    try:
-        # Get the query from request
-        data = request.get_json()
-        if not data or 'query' not in data:
-            return jsonify({
-                "error": "Missing 'query' parameter",
-                "success": False
-            }), 400
+Original user request: "{base_query}"
+Generate a complete SQL query that shows ALL months:"""
+
+            try:
+                response = self.model.generate_content(
+                    month_prompt,
+                    generation_config=genai.types.GenerationConfig(
+                        temperature=0.2,
+                        max_output_tokens=1000
+                    )
+                )
+                
+                return self.clean_sql_response(str(response.text))
+            except:
+                return base_query
         
-        user_query = data['query'].strip()
-        if not user_query:
-            return jsonify({
-                "error": "Empty query",
-                "success": False
-            }), 400
+        return base_query
+    
+    def clean_sql_response(self, response: str) -> str:
+        """Clean the AI response to extract only SQL"""
         
-        logger.info(f"Received query: {user_query}")
+        # Remove markdown code blocks
+        response = re.sub(r'```sql\s*', '', response)
+        response = re.sub(r'```\s*$', '', response)
         
-        # Initialize assistant if needed
-        if not initialize_assistant():
-            return jsonify({
-                "error": "Failed to initialize database assistant",
-                "success": False
-            }), 500
+        # Split by lines and look for SQL
+        lines = response.split('\n')
+        sql_lines = []
+        found_sql = False
         
-        # Get response from your existing assistant
+        for line in lines:
+            line = line.strip()
+            
+            # Skip explanatory text
+            if line.startswith(('The question', 'This query', 'Note:', 'Example:', '--')):
+                continue
+            
+            # Look for SQL keywords at start of line
+            if re.match(r'^(SELECT|WITH|INSERT|UPDATE|DELETE)', line, re.IGNORECASE):
+                found_sql = True
+            
+            if found_sql and line:
+                sql_lines.append(line)
+            
+            # Stop if we hit another explanation
+            if found_sql and line.startswith(('The result', 'This will', 'Note:')):
+                break
+        
+        if sql_lines:
+            return '\n'.join(sql_lines).strip()
+        
+        # Fallback: try to find any SQL in the response
+        sql_match = re.search(r'(SELECT.*?;|SELECT.*?$)', response, re.DOTALL | re.IGNORECASE)
+        if sql_match:
+            return sql_match.group(1).strip()
+        
+        return ""
+
+class DatabaseAssistant:
+    def __init__(self):
+        """Initialize the Human-Like Database Assistant"""
+        self.load_environment()
+        self.setup_ai_model()
+        self.setup_spellchecker()
+        self.setup_database_pool()
+        self.query_cache = {}
+        self.session_history = []
+        self.context = ConversationContext()
+        self.nlp = HumanLikeUnderstanding()
+        self.query_generator = SmartQueryGenerator(self.model, self.get_enhanced_prompt())
+    
+    def get_response_from_db_assistant(self, user_input: str) -> str:
+        """Simple API method for web requests"""
         try:
-            response = db_assistant.get_response_from_db_assistant(user_query)
-            logger.info(f"Generated response successfully")
+            if not user_input.strip():
+                return "Please ask me a question about your database."
+            
+            # Process the question
+            processed_question = self.preprocess_question(user_input)
+            
+            # Generate SQL
+            sql_query, chart_type = self.get_query_and_chart_type(processed_question)
+            
+            if not sql_query:
+                return "I couldn't understand that question. Try asking something like 'How many customers do I have?'"
+            
+            # Execute query
+            df_result, success = self.execute_query(sql_query)
+            
+            if success and df_result is not None and not df_result.empty:
+                # Format results as text
+                result_text = f"Found {len(df_result)} results:\n\n"
+                result_text += df_result.head(10).to_string(index=False)
+                
+                if len(df_result) > 10:
+                    result_text += f"\n\n...and {len(df_result) - 10} more rows"
+                
+                return result_text
+            else:
+                return "No results found or there was an error."
+                
         except Exception as e:
-            logger.error(f"Error processing query: {e}")
-            response = f"I encountered an error processing your request: {str(e)}"
+            return f"Error: {str(e)}"
         
-        return jsonify({
-            "response": response,
-            "success": True,
-            "query": user_query
-        })
+    def load_environment(self):
+        """Load environment variables"""
+        load_dotenv()
+        self.api_key = os.getenv("GOOGLE_API_KEY")
+        if not self.api_key:
+            raise ValueError("GOOGLE_API_KEY not found in environment variables!")
         
-    except Exception as e:
-        logger.error(f"Query handling error: {e}")
-        logger.error(f"Traceback: {traceback.format_exc()}")
-        return jsonify({
-            "error": f"Internal server error: {str(e)}",
-            "success": False
-        }), 500
+        self.db_params = {
+            "dbname": os.getenv("DB_NAME", "postgres"),
+            "user": os.getenv("DB_USER", "postgres.chdjmbylbqdsavazecll"),
+            "password": os.getenv("DB_PASSWORD", "Hexen2002_23"),
+            "host": os.getenv("DB_HOST", "aws-1-eu-west-2.pooler.supabase.com"),
+            "port": os.getenv("DB_PORT", "6543")
+        }
+    
+    def setup_ai_model(self):
+        """Setup AI model"""
+        genai.configure(api_key=self.api_key)
+        self.model = genai.GenerativeModel('gemini-1.5-flash')
+        
+        try:
+            test_response = self.model.generate_content("Test")
+            logger.info("AI model connected successfully")
+        except Exception as e:
+            logger.error(f"Failed to connect to AI model: {e}")
+            raise
+    
+    def setup_spellchecker(self):
+        """Setup spellchecker and shortcuts"""
+        self.spell = SpellChecker()
+        self.shortcuts_map = {
+            'u': 'you', 'r': 'are', 'ofc': 'of course', 'btw': 'by the way',
+            'cos': 'because', 'cuz': 'because', 'b4': 'before', '2': 'to',
+            'ur': 'your', 'thx': 'thanks', 'pls': 'please', 'w/': 'with',
+            'w/o': 'without', 'asap': 'as soon as possible', 'rn': 'right now',
+            'tbh': 'to be honest', 'imo': 'in my opinion', 'fyi': 'for your information'
+        }
+    
+    def setup_database_pool(self):
+        """Setup database connection pool"""
+        try:
+            self.connection_pool = SimpleConnectionPool(
+                minconn=1, maxconn=5, **self.db_params
+            )
+            logger.info("Database connection pool created")
+        except Exception as e:
+            logger.error(f"Failed to create connection pool: {e}")
+            raise
+    
+    @contextmanager
+    def get_db_connection(self):
+        """Get a safe database connection"""
+        conn = None
+        try:
+            conn = self.connection_pool.getconn()
+            yield conn
+        except Exception as e:
+            if conn:
+                conn.rollback()
+            logger.error(f"Database error: {e}")
+            raise
+        finally:
+            if conn:
+                self.connection_pool.putconn(conn)
+    
+    def human_like_response(self, message: str, tone: str = 'friendly') -> None:
+        """Generate human-like responses"""
+        responses = {
+            'thinking': [
+                "Let me think about that...",
+                "Processing your request...",
+                "Working on it...",
+                "Give me a moment...",
+                "Analyzing..."
+            ],
+            'understood': [
+                "Got it! ",
+                "I understand! ",
+                "Ah, I see! ",
+                "Makes sense! ",
+                "Perfect! "
+            ],
+            'chart_switch': [
+                "Switching to a {chart_type} chart for you!",
+                "Converting to {chart_type} chart right away!",
+                "Good idea! Let me make that a {chart_type} chart.",
+                "Absolutely! {chart_type} chart coming up!",
+                "Nice choice! Creating {chart_type} chart now."
+            ],
+            'error_friendly': [
+                "Hmm, something went wrong there. Let me try a different approach.",
+                "Oops! That didn't work as expected. Let me fix that.",
+                "My bad! Let me try that again.",
+                "Sorry about that! Let me handle this better."
+            ]
+        }
+        
+        import random
+        if tone in responses:
+            selected = random.choice(responses[tone])
+            print(selected.format(chart_type=message) if '{chart_type}' in selected else selected)
+    
+    def preprocess_question(self, question: str) -> str:
+        """Process and clean the question"""
+        cleaned_words = []
+        words = question.lower().split()
+        
+        for word in words:
+            if word in self.shortcuts_map:
+                cleaned_words.append(self.shortcuts_map[word])
+            else:
+                if re.match(r'^[a-zA-Z]+$', word):
+                    corrected_word = self.spell.correction(word)
+                    cleaned_words.append(corrected_word if corrected_word else word)
+                else:
+                    cleaned_words.append(word)
+        
+        return ' '.join(cleaned_words)
+    
+    def get_enhanced_prompt(self) -> str:
+        """Generate enhanced prompt for AI"""
+        return """You are an advanced PostgreSQL database assistant. Convert natural language questions into single, valid SQL queries ONLY.
 
-@app.route('/test', methods=['GET'])
+Database Schema:
+
+public.customers:
+- customer_id (serial, primary key)
+- name (text), email (text), phone (text)
+- created_at (timestamp), city (varchar)
+
+public.products:
+- product_id (serial, primary key)
+- name (text), category (text)
+- price (numeric), stock (integer), cost (double precision)
+
+public.invoices:
+- invoice_id (serial, primary key)
+- customer_id (integer), invoice_date (date), total_amount (numeric)
+
+public.invoice_items:
+- invoice_id (bigint), product_id (bigint)
+- quantity (bigint), price (double precision)
+
+public.inventory_movements:
+- movement_id (serial, primary key)
+- product_id (integer), movement_type (text)
+- quantity (integer), movement_date (timestamp), invoice_id (integer)
+
+CRITICAL RULES:
+1. Return ONLY valid SQL queries, no explanations or comments
+2. Use exact table/column names from schema
+3. For monthly data, always include ALL 12 months using generate_series or similar
+4. Add "AS PIE CHART" or "AS BAR CHART" for visualizations when requested
+5. If the question is unclear, return a sensible default query
+
+Example for monthly data:
+WITH all_months AS (
+    SELECT TO_CHAR(generate_series('2024-01-01'::date, '2024-12-01'::date, '1 month'::interval), 'YYYY-MM') AS month
+)
+SELECT am.month, COALESCE(COUNT(i.invoice_id), 0) AS invoice_count
+FROM all_months am
+LEFT JOIN invoices i ON TO_CHAR(i.invoice_date, 'YYYY-MM') = am.month
+GROUP BY am.month
+ORDER BY am.month;
+"""
+    
+    def understand_human_input(self, user_input: str) -> Tuple[str, str, Dict[str, Any]]:
+        """Advanced human input understanding"""
+        intent = self.nlp.classify_intent(user_input, self.context)
+        
+        # Handle different types of human communication
+        interpretation = {
+            'action': 'query',
+            'needs_confirmation': False,
+            'chart_type': None,
+            'reference_previous': False,
+            'needs_response_only': False
+        }
+        
+        # Handle non-SQL responses
+        if intent in ['vague_chart_request', 'missing_data_complaint']:
+            interpretation['needs_response_only'] = True
+            interpretation['action'] = 'respond_only'
+            return user_input, intent, interpretation
+        
+        if intent.startswith('chart_request_'):
+            chart_type = intent.split('_')[-1]
+            interpretation['action'] = 'create_chart'
+            interpretation['chart_type'] = chart_type
+            interpretation['reference_previous'] = True
+            
+            return f"Show the previous results as a {chart_type} chart", intent, interpretation
+        
+        elif intent == 'same_data_different_viz':
+            chart_type = self.nlp.extract_chart_type(user_input)
+            if chart_type:
+                interpretation['action'] = 'create_chart'
+                interpretation['chart_type'] = chart_type
+                interpretation['reference_previous'] = True
+                
+                return f"Create a {chart_type} chart using the last query results", intent, interpretation
+        
+        elif intent == 'simple_answer':
+            if self.context.awaiting_chart_choice:
+                if any(word in user_input.lower() for word in ['yes', 'yeah', 'yep', 'ok', 'sure']):
+                    interpretation['action'] = 'create_chart'
+                    interpretation['chart_type'] = 'bar'  # default
+                    interpretation['reference_previous'] = True
+                    return "Create a chart from the previous results", intent, interpretation
+        
+        elif intent == 'follow_up':
+            # User wants to build on previous query
+            enhanced_input = self.nlp.understand_reference(user_input, self.context)
+            interpretation['reference_previous'] = True
+            return enhanced_input, intent, interpretation
+        
+        # Default: treat as new query but with context
+        if self.context.last_question and len(user_input.split()) < 5:
+            # Short input might be referring to previous context
+            contextual_input = f"Based on the previous question about '{self.context.last_question}', {user_input}"
+            interpretation['reference_previous'] = True
+            return contextual_input, intent, interpretation
+        
+        return user_input, intent, interpretation
+    
+    def generate_human_like_response(self, intent: str, success: bool = True) -> str:
+        """Generate contextual, human-like responses"""
+        responses = {
+            'chart_request_pie': [
+                "Great choice! Pie charts are perfect for showing proportions. Creating one now...",
+                "Excellent! A pie chart will show the breakdown nicely.",
+                "Smart thinking! Pie charts make percentages super clear."
+            ],
+            'chart_request_bar': [
+                "Perfect! Bar charts are great for comparing values. Making one now...",
+                "Good call! Bar charts make it easy to compare different items.",
+                "Absolutely! Bar charts are ideal for this kind of comparison."
+            ],
+            'understood_context': [
+                "I see what you're getting at! ",
+                "Ah, building on the previous results! ",
+                "Got it! Using the context from before. ",
+                "I understand the connection! "
+            ],
+            'new_query': [
+                "Let me look that up for you!",
+                "Interesting question! Let me check the database.",
+                "Good question! Searching through the data now.",
+                "Let me find that information for you."
+            ]
+        }
+        
+        import random
+        if intent in responses:
+            return random.choice(responses[intent])
+        return ""
+    
+    def get_query_and_chart_type(self, question: str, context_aware: bool = False) -> Tuple[Optional[str], Optional[str]]:
+        """Generate SQL query with context awareness"""
+        try:
+            # Build context-aware prompt
+            base_prompt = self.get_enhanced_prompt()
+            
+            if context_aware and self.context.last_query:
+                base_prompt = self.get_enhanced_prompt()
+                prompt = f"""{base_prompt}
+                
+CONTEXT: The user previously asked: "{self.context.last_question}"
+The last query was: {self.context.last_query}
+
+Now they're asking: "{question}"
+
+This might be a follow-up question or a request to visualize the same data differently.
+
+Generate ONLY a valid SQL query:"""
+            else:
+                base_prompt = self.get_enhanced_prompt()
+                prompt = f"{base_prompt}\n\nQuestion: \"{question}\"\nSQL Query:"
+            
+            response = self.model.generate_content(
+                prompt,
+                generation_config=genai.types.GenerationConfig(
+                    temperature=0.2,
+                    max_output_tokens=1000
+                )
+            )
+            
+            sql_query = self.query_generator.clean_sql_response(str(response.text))
+            
+            # Extract chart type
+            chart_type = None
+            if "AS PIE CHART" in sql_query.upper():
+                chart_type = 'pie'
+                sql_query = re.sub(r'\s*AS PIE CHART\s*', '', sql_query, flags=re.IGNORECASE)
+            elif "AS BAR CHART" in sql_query.upper():
+                chart_type = 'bar'
+                sql_query = re.sub(r'\s*AS BAR CHART\s*', '', sql_query, flags=re.IGNORECASE)
+            
+            # Ensure complete months if needed
+            sql_query = self.query_generator.generate_sql_with_complete_months(sql_query)
+            
+            if not self.validate_sql_query(sql_query):
+                return None, None
+            
+            return sql_query, chart_type
+            
+        except Exception as e:
+            logger.error(f"Error generating query: {e}")
+            return None, None
+    
+    def validate_sql_query(self, sql_query: str) -> bool:
+        """Validate SQL query"""
+        if not sql_query or len(sql_query.strip()) < 5:
+            return False
+        
+        # Check if it's actually SQL and not explanatory text
+        if sql_query.startswith(('The question', 'This query', 'Note:', 'Example:')):
+            return False
+        
+        dangerous_keywords = ['DROP', 'TRUNCATE', 'ALTER', 'CREATE', 'GRANT', 'REVOKE']
+        sql_upper = sql_query.upper()
+        
+        for keyword in dangerous_keywords:
+            if keyword in sql_upper:
+                logger.warning(f"Dangerous query detected: {keyword}")
+                return False
+        
+        # Must start with valid SQL command
+        if not re.match(r'^\s*(SELECT|WITH|INSERT|UPDATE|DELETE)', sql_query, re.IGNORECASE):
+            return False
+        
+        return True
+    
+    def get_voice_input(self) -> Optional[str]:
+        """Enhanced voice input"""
+        recognizer = sr.Recognizer()
+        recognizer.energy_threshold = 4000
+        recognizer.dynamic_energy_threshold = True
+        
+        try:
+            with sr.Microphone() as source:
+                print("Adjusting for background noise...")
+                recognizer.adjust_for_ambient_noise(source, duration=1)
+                print("I'm listening... speak now!")
+                
+                audio = recognizer.listen(source, timeout=10, phrase_time_limit=10)
+            
+            print("Understanding what you said...")
+            
+            # Try multiple languages
+            try:
+                text = recognizer.recognize_google(audio, language='en-US')
+                print(f"You said: {text}")
+                return text
+            except:
+                text = recognizer.recognize_google(audio, language='ar-SA')
+                print(f"You said: {text}")
+                return text
+                
+        except sr.WaitTimeoutError:
+            print("I didn't hear anything. Try speaking again!")
+            return None
+        except sr.UnknownValueError:
+            print("I couldn't understand that. Could you try again?")
+            return None
+        except Exception as e:
+            print(f"Voice recognition error: {e}")
+            return None
+    
+    def is_modification_query(self, sql_query: str) -> bool:
+        """Check if query modifies data"""
+        modification_keywords = ['INSERT', 'UPDATE', 'DELETE', 'MERGE']
+        sql_upper = sql_query.upper().strip()
+        return any(sql_upper.startswith(keyword) for keyword in modification_keywords)
+    
+    def get_user_confirmation(self, sql_query: str) -> bool:
+        """Get user confirmation with human-like interaction"""
+        print("\n" + "="*60)
+        print("HEADS UP: This will change your database!")
+        print("="*60)
+        print(f"Query: {sql_query}")
+        print("="*60)
+        
+        print("I want to make sure you're cool with this before I run it.")
+        
+        while True:
+            confirm = input("Sound good? (yes/no): ").strip().lower()
+            if confirm in ['yes', 'y', 'yeah', 'yep', 'sure', 'ok', 'go ahead']:
+                print("Alright, executing now!")
+                return True
+            elif confirm in ['no', 'n', 'nope', 'cancel', 'stop', 'abort']:
+                print("No problem! Cancelled.")
+                return False
+            else:
+                print("Just say 'yes' or 'no' - I want to be 100% sure!")
+    
+    def execute_query(self, sql_query: str) -> Tuple[Optional[pd.DataFrame], bool]:
+        """Execute query with human-like feedback"""
+        try:
+            with self.get_db_connection() as conn:
+                start_time = time.time()
+                
+                with conn.cursor() as cur:
+                    cur.execute(sql_query)
+                    
+                    if self.is_modification_query(sql_query):
+                        conn.commit()
+                        affected_rows = cur.rowcount
+                        execution_time = time.time() - start_time
+                        
+                        logger.info(f"Modification executed - {affected_rows} rows affected")
+                        print(f"Done! Updated {affected_rows} rows in {execution_time:.2f} seconds")
+                        return None, True
+                    else:
+                        rows = cur.fetchall()
+                        column_names = [desc[0] for desc in cur.description] if cur.description else []
+                        
+                        execution_time = time.time() - start_time
+                        logger.info(f"Query executed - {len(rows)} rows returned")
+                        
+                        if rows and column_names:
+                            df = pd.DataFrame(rows, columns=column_names)
+                            if len(rows) == 0:
+                                print("No matches found for that query")
+                            else:
+                                print(f"Found {len(rows)} results in {execution_time:.2f} seconds!")
+                            return df, True
+                        else:
+                            print("No data found for that query")
+                            return pd.DataFrame(), True
+                            
+        except psycopg2.Error as e:
+            logger.error(f"Database error: {e}")
+            print(f"Whoops! Database hiccup: {e}")
+            return None, False
+        except Exception as e:
+            logger.error(f"Unexpected error: {e}")
+            print(f"Something unexpected happened: {e}")
+            return None, False
+    
+    def create_enhanced_chart(self, df: pd.DataFrame, chart_type: str, question: str) -> Optional[Dict[str, Any]]:
+        """Create beautiful, enhanced charts and return as base64 for Flutter"""
+        if df.empty or len(df.columns) < 2:
+            print("Not enough data to create a meaningful chart")
+            return None
+        
+        plt.style.use('default')
+        fig, ax = plt.subplots(figsize=(12, 8))
+        
+        try:
+            if chart_type == 'pie':
+                # Beautiful pie chart
+                colors = plt.cm.Set3(range(len(df)))
+                wedges, texts, autotexts = ax.pie(
+                    df.iloc[:, 1], 
+                    labels=df.iloc[:, 0],
+                    autopct='%1.1f%%',
+                    colors=colors,
+                    startangle=90,
+                    explode=[0.05] * len(df),
+                    shadow=True,
+                    textprops={'fontsize': 11, 'fontweight': 'bold'}
+                )
+                
+                for autotext in autotexts:
+                    autotext.set_color('white')
+                    autotext.set_fontweight('bold')
+                    autotext.set_fontsize(10)
+                
+                ax.set_title(f"{question}", fontsize=16, fontweight='bold', pad=20)
+                
+            elif chart_type == 'bar':
+                # Beautiful bar chart
+                bars = ax.bar(
+                    range(len(df)), 
+                    df.iloc[:, 1], 
+                    color=plt.cm.viridis(np.linspace(0, 1, len(df))),
+                    edgecolor='white',
+                    linewidth=1.2
+                )
+                
+                # Add value labels
+                for i, bar in enumerate(bars):
+                    height = bar.get_height()
+                    ax.annotate(f'{height:,.0f}',
+                              xy=(bar.get_x() + bar.get_width() / 2, height),
+                              xytext=(0, 3),
+                              textcoords="offset points",
+                              ha='center', va='bottom',
+                              fontweight='bold')
+                
+                ax.set_xlabel(df.columns[0], fontsize=12, fontweight='bold')
+                ax.set_ylabel(df.columns[1], fontsize=12, fontweight='bold')
+                ax.set_title(f"{question}", fontsize=16, fontweight='bold', pad=20)
+                ax.set_xticks(range(len(df)))
+                ax.set_xticklabels(df.iloc[:, 0], rotation=45, ha='right')
+                ax.grid(True, alpha=0.3, linestyle='--')
+                ax.spines['top'].set_visible(False)
+                ax.spines['right'].set_visible(False)
+            
+            plt.tight_layout()
+            
+            # Convert to base64 for Flutter
+            buffer = io.BytesIO()
+            plt.savefig(buffer, format='png', dpi=300, bbox_inches='tight', facecolor='white')
+            buffer.seek(0)
+            
+            # Encode to base64
+            chart_base64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
+            
+            # Also save locally (optional)
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"chart_{chart_type}_{timestamp}.png"
+            plt.savefig(filename, dpi=300, bbox_inches='tight', facecolor='white')
+            print(f"Saved your {chart_type} chart as: {filename}")
+            
+            plt.close(fig)  # Important: close figure to free memory
+            
+            return {
+                'chart_base64': chart_base64,
+                'chart_type': chart_type,
+                'filename': filename
+            }
+            
+        except Exception as e:
+            logger.error(f"Chart error: {e}")
+            print(f"Couldn't create the chart: {e}")
+            plt.close(fig)  # Close even on error
+            return None
+
+    def display_results_naturally(self, df: pd.DataFrame, question: str, max_rows: int = 50):
+        """Display results in a natural, conversational way with configurable limit"""
+        if df.empty:
+            print("Didn't find anything matching that query")
+            return df.to_dict('records')  # Return empty list for Flutter
+        
+        row_count = len(df)
+        
+        if row_count == 1:
+            print("Found exactly 1 result:")
+        else:
+            print(f"Found {row_count} results. Here are the highlights:")
+        
+        # Show appropriate amount of data - INCREASED LIMIT
+        if row_count <= max_rows:  # Changed from 15 to configurable max_rows (default 50)
+            print("\n" + df.to_string(index=False))
+            display_df = df
+        else:
+            show_count = min(30, max_rows)  # Show 30 instead of 10 when truncating
+            print(f"\nTop {show_count} results:")
+            print(df.head(show_count).to_string(index=False))
+            print(f"\nWant to see more? I have {row_count - show_count} additional results!")
+            display_df = df.head(show_count)
+        
+        # Natural insights
+        if row_count > 1 and len(df.columns) >= 2:
+            for col in df.select_dtypes(include=[np.number]).columns:
+                if col != df.columns[0]:  # Skip first column if it's an ID
+                    max_val = df[col].max()
+                    min_val = df[col].min()
+                    avg_val = df[col].mean()
+                    print(f"\nQuick insights for {col}:")
+                    print(f"   Highest: {max_val:,.2f}")
+                    print(f"   Lowest: {min_val:,.2f}") 
+                    print(f"   Average: {avg_val:,.2f}")
+        
+        # Return data for Flutter
+        return display_df.to_dict('records')
+
+# Add this method to your DatabaseAssistant class in db_assistant.py
+# Find the existing execute_query_and_get_results method and replace it with this complete version:
+
+    def execute_query_and_get_results(self, user_input: str) -> Dict[str, Any]:
+        """Execute query and return comprehensive results for Flutter"""
+        
+        # Initialize response structure
+        response_data = {
+            'success': False,
+            'message': '',
+            'data': [],
+            'chart': None,
+            'query': '',
+            'intent': '',
+            'row_count': 0
+        }
+        
+        try:
+            # Process the question
+            processed_question = self.preprocess_question(user_input)
+            interpreted_input, intent, interpretation = self.understand_human_input(user_input)
+            
+            response_data['intent'] = intent
+            
+            # Handle chart creation from previous results
+            if interpretation['action'] == 'create_chart':
+                if self.context.last_results is not None and not self.context.last_results.empty:
+                    chart_type = interpretation['chart_type']
+                    print(f"Creating a {chart_type} chart from your last results...")
+                    chart_data = self.create_enhanced_chart(
+                        self.context.last_results, 
+                        chart_type, 
+                        self.context.last_question or "Previous Query Results"
+                    )
+                    
+                    response_data.update({
+                        'success': True,
+                        'message': f"Created {chart_type} chart from previous results",
+                        'data': self.context.last_results.to_dict('records'),
+                        'chart': chart_data,
+                        'row_count': len(self.context.last_results)
+                    })
+                    
+                    self.context.last_chart_type = chart_type
+                    return response_data
+                else:
+                    response_data.update({
+                        'success': False,
+                        'message': "I don't have any recent results to chart. Ask me a question first!"
+                    })
+                    return response_data
+            
+            # Regular query processing
+            if not self.query_generator.should_generate_sql(processed_question, intent):
+                response_msg = self.query_generator.handle_non_sql_response(processed_question, intent, self.context)
+                response_data.update({
+                    'success': True,
+                    'message': response_msg
+                })
+                return response_data
+            
+            # Generate and execute SQL
+            sql_query, chart_type = self.get_query_and_chart_type(
+                processed_question, 
+                context_aware=interpretation['reference_previous']
+            )
+            
+            response_data['query'] = sql_query
+            
+            if not sql_query:
+                response_data.update({
+                    'success': False,
+                    'message': "I couldn't understand that question. Try asking something like 'How many customers do I have?'"
+                })
+                return response_data
+            
+            # Execute query
+            df_result, success = self.execute_query(sql_query)
+            
+            if success and df_result is not None:
+                # Convert DataFrame to list of dictionaries for JSON serialization
+                display_data = df_result.head(50).to_dict('records')  # Limit to 50 rows for performance
+                
+                # Create chart if requested or if data is suitable for visualization
+                chart_data = None
+                if chart_type and len(df_result) > 0 and len(df_result.columns) >= 2:
+                    print(f"\nCreating {chart_type} chart!")
+                    chart_data = self.create_enhanced_chart(df_result, chart_type, user_input)
+                elif len(df_result) > 1 and len(df_result.columns) >= 2:
+                    # Auto-suggest chart for suitable data
+                    numeric_cols = df_result.select_dtypes(include=['number']).columns
+                    if len(numeric_cols) > 0 and len(df_result) <= 20:  # Good for pie chart
+                        chart_data = self.create_enhanced_chart(df_result, 'pie', user_input)
+                    elif len(numeric_cols) > 0:  # Good for bar chart
+                        chart_data = self.create_enhanced_chart(df_result.head(15), 'bar', user_input)
+                
+                # Update context
+                self.context.last_query = sql_query
+                self.context.last_question = user_input
+                self.context.last_results = df_result
+                self.context.last_chart_type = chart_type
+                
+                # Format message
+                message = f"Found {len(df_result)} results"
+                if chart_data:
+                    message += f" with {chart_type or 'auto-generated'} chart"
+                
+                response_data.update({
+                    'success': True,
+                    'message': message,
+                    'data': display_data,
+                    'chart': chart_data,
+                    'row_count': len(df_result)
+                })
+                
+            else:
+                response_data.update({
+                    'success': False,
+                    'message': "No results found or there was an error executing the query."
+                })
+            
+            return response_data
+            
+        except Exception as e:
+            logger.error(f"Error in execute_query_and_get_results: {e}")
+            response_data.update({
+                'success': False,
+                'message': f"An error occurred: {str(e)}"
+            })
+            return response_data
+
+    def suggest_next_actions(self, df: pd.DataFrame, chart_type: Optional[str]):
+        """Suggest logical next steps"""
+        if df.empty:
+            return
+        
+        suggestions = []
+        
+        # Chart suggestions
+        if not chart_type and len(df.columns) >= 2 and len(df) > 1:
+            suggestions.append("Want statistics? Try 'analyze this data' or 'show trends'")
+        
+        # Data exploration suggestions
+        if len(df) > 10:
+            suggestions.append("Want to filter these results? Try 'show only top 5' or 'filter by...'")
+        
+        if len(df.columns) > 2:
+            suggestions.append("Interested in a specific column? Just ask about it!")
+        
+        # Smart suggestions based on data
+        numeric_cols = df.select_dtypes(include=['number']).columns
+        if len(numeric_cols) > 0:
+            suggestions.append("Want statistics? Try 'analyze this data' or 'show trends'")
+        
+        if suggestions:
+            print(f"\nWhat's next?")
+            for suggestion in suggestions[:2]:  # Limit to 2 suggestions
+                print(f"   {suggestion}")
+    
+    def run(self):
+        """Run the human-like assistant"""
+        print("Hey there! I'm your database buddy - I'll help you explore your data!")
+        print("Just ask me anything in plain English, and I'll figure out what you need.")
+        print("Pro tip: After I show you results, you can just say 'pie chart' or 'bar chart' to visualize them!")
+        
+        # Choose input method naturally
+        while True:
+            mode = input("\nHow would you like to talk to me? (type/voice): ").strip().lower()
+            if mode in ['text', 'type', 't', 'typing', 'keyboard']:
+                input_mode = 'text'
+                print("Cool! Just type your questions.")
+                break
+            elif mode in ['voice', 'v', 'speech', 'talk', 'microphone']:
+                input_mode = 'voice'
+                print("Awesome! I'll listen for your voice.")
+                break
+            else:
+                print("Just say 'type' or 'voice' - whichever feels more natural!")
+        
+        while True:
+            try:
+                # Get user input
+                if input_mode == 'voice':
+                    user_input = self.get_voice_input()
+                    if not user_input:
+                        continue
+                else:
+                    user_input = input("\nWhat would you like to know? ").strip()
+                
+                if not user_input:
+                    continue
+                
+                # Handle exit gracefully
+                if user_input.lower() in ['quit', 'exit', 'bye', 'goodbye', 'see ya', 'later']:
+                    print("See you later! It was fun helping you explore your data!")
+                    break
+                
+                # Special commands with human touch
+                if user_input.lower() in ['help', 'what can you do', 'options']:
+                    self.show_help_naturally()
+                    continue
+                elif user_input.lower() in ['stats', 'how am i doing', 'session info']:
+                    self.show_session_stats_naturally()
+                    continue
+                elif user_input.lower() in ['clear cache', 'clear', 'reset']:
+                    self.query_cache.clear()
+                    print("All cleared! Fresh start.")
+                    continue
+                
+                # Human-like input understanding
+                interpreted_input, intent, interpretation = self.understand_human_input(user_input)
+                
+                # Handle non-SQL responses first
+                if interpretation['needs_response_only']:
+                    response = self.query_generator.handle_non_sql_response(user_input, intent, self.context)
+                    print(response)
+                    
+                    # Special handling for missing months complaint
+                    if intent == 'missing_data_complaint' and self.context.last_query:
+                        print("\nLet me fix that by including all months...")
+                        # Re-run the last query with complete months
+                        fixed_query = self.query_generator.generate_sql_with_complete_months(self.context.last_query)
+                        print(f"\nHere's what I'm going to run:")
+                        print(f"```sql\n{fixed_query}\n```")
+                        print("Running the improved query...")
+                        
+                        df_result, success = self.execute_query(fixed_query)
+                        if success and df_result is not None:
+                            self.context.last_results = df_result
+                            self.display_results_naturally(df_result, "Complete monthly data")
+                            self.suggest_next_actions(df_result, None)
+                    
+                    continue
+                
+                # Generate appropriate response
+                response_msg = self.generate_human_like_response(intent)
+                if response_msg:
+                    print(response_msg)
+                
+                # Handle different types of requests
+                if interpretation['action'] == 'create_chart':
+                    # User wants a chart of previous results
+                    if self.context.last_results is not None and not self.context.last_results.empty:
+                        chart_type = interpretation['chart_type']
+                        print(f"Creating a {chart_type} chart from your last results...")
+                        self.create_enhanced_chart(
+                            self.context.last_results, 
+                            chart_type, 
+                            self.context.last_question or "Previous Query Results"
+                        )
+                        
+                        # Update context
+                        self.context.last_chart_type = chart_type
+                        continue
+                    else:
+                        print("I don't have any recent results to chart. Ask me a question first!")
+                        continue
+                
+                # Regular query processing
+                self.human_like_response("thinking")
+                
+                # Preprocess the question
+                processed_question = self.preprocess_question(interpreted_input)
+                
+                # Check if we should generate SQL
+                if not self.query_generator.should_generate_sql(processed_question, intent):
+                    response = self.query_generator.handle_non_sql_response(processed_question, intent, self.context)
+                    print(response)
+                    continue
+                
+                # Generate SQL query
+                sql_query, chart_type = self.get_query_and_chart_type(
+                    processed_question, 
+                    context_aware=interpretation['reference_previous']
+                )
+                
+                if not sql_query:
+                    print("Hmm, I'm having trouble understanding that. Could you rephrase it?")
+                    print("Try something like: 'How many customers do I have?' or 'Show me top selling products'")
+                    continue
+                
+                print(f"\nHere's what I'm going to run:")
+                print(f"```sql\n{sql_query}\n```")
+                
+                # Handle modifications with personality
+                is_modification = self.is_modification_query(sql_query)
+                if is_modification:
+                    if not self.get_user_confirmation(sql_query):
+                        print("No worries! What else can I help you with?")
+                        continue
+                
+                # Execute with human-like feedback
+                print("Running the query...")
+                df_result, success = self.execute_query(sql_query)
+                
+                # Update context
+                if success:
+                    self.context.last_query = sql_query
+                    self.context.last_question = user_input
+                    self.context.last_results = df_result
+                    self.context.last_chart_type = chart_type
+                
+                # Save to history
+                session_entry = {
+                    'timestamp': datetime.now().isoformat(),
+                    'original_input': user_input,
+                    'interpreted_input': interpreted_input,
+                    'intent': intent,
+                    'sql_query': sql_query,
+                    'chart_type': chart_type,
+                    'was_modification': is_modification,
+                    'success': success,
+                    'result_count': len(df_result) if df_result is not None else 0
+                }
+                self.session_history.append(session_entry)
+                
+                if success and df_result is not None and not df_result.empty:
+                    # Display results naturally
+                    self.display_results_naturally(df_result, user_input)
+                    
+                    # Create chart if requested
+                    if chart_type:
+                        print(f"\nAnd here's your {chart_type} chart!")
+                        self.create_enhanced_chart(df_result, chart_type, user_input)
+                    
+                    # Natural suggestions
+                    self.suggest_next_actions(df_result, chart_type)
+                
+                elif success and is_modification:
+                    print("All done! Your database has been updated.")
+                else:
+                    print("Something didn't work quite right. Want to try asking differently?")
+                
+            except KeyboardInterrupt:
+                print("\n\nCatch you later!")
+                break
+            except Exception as e:
+                logger.error(f"Unexpected error: {e}")
+                print(f"Oops! Something unexpected happened: {e}")
+                print("But I'm still here to help! What else can we explore?")
+                continue
+        
+        self.cleanup()
+        
+    
+    def show_help_naturally(self):
+        """Show help in a conversational way"""
+        print("""
+Here's what I can do for you:
+
+Just talk to me naturally! Examples:
+   • "How many customers do I have?"
+   • "Show me my best selling products"
+   • "What are my total sales this month?"
+   • "Which customers bought the most?"
+
+Want charts? Super easy:
+   • After I show you results, just say "pie chart" or "bar chart"
+   • Or ask upfront: "Top products as a bar chart"
+
+I remember context, so you can say:
+   • "Now show it as a pie chart" (after seeing results)
+   • "What about last month?" (building on previous questions)
+   • "Filter those by price > 100"
+
+Voice mode: Just speak naturally - I understand both English and Arabic!
+
+Quick commands:
+   • "help" - This message
+   • "stats" - See what we've accomplished
+   • "quit" - When you're done
+
+Pro tip: I'm pretty smart about understanding what you mean, even if you're not super specific!
+""")
+    
+    def show_session_stats_naturally(self):
+        """Show stats in a friendly way"""
+        total = len(self.session_history)
+        successful = sum(1 for item in self.session_history if item.get('success', False))
+        
+        if total == 0:
+            print("We're just getting started! No queries yet.")
+            return
+        
+        print(f"""
+Here's what we've accomplished together:
+   
+Queries: {total} total, {successful} successful ({(successful/total*100):.0f}% success rate)
+Cache: {len(self.query_cache)} queries cached for faster responses
+Session started: {datetime.now().strftime('%I:%M %p')}
+
+{"You're getting the hang of this!" if successful/total > 0.8 else "Keep exploring - you're doing great!"}
+""")
+    
+    def cleanup(self):
+        """Human-like cleanup"""
+        try:
+            if self.session_history:
+                print("\nWant me to save our conversation history?")
+                save_choice = input("It might be useful for next time! (yes/no): ").strip().lower()
+                if save_choice in ['yes', 'y', 'sure', 'ok', 'yeah']:
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    filename = f"our_conversation_{timestamp}.json"
+                    
+                    with open(filename, 'w', encoding='utf-8') as f:
+                        json.dump(self.session_history, f, ensure_ascii=False, indent=2)
+                    
+                    print(f"Saved as: {filename}")
+                    print("You can review our conversation anytime!")
+            
+            if hasattr(self, 'connection_pool'):
+                self.connection_pool.closeall()
+            
+            print("\nThanks for hanging out with me! Hope I helped you discover some cool insights!")
+            print("Come back anytime you want to explore your data!")
+            
+        except Exception as e:
+            logger.error(f"Cleanup error: {e}")
+
+# --- Helper Functions ---
+import numpy as np
+
 def test_connection():
     """Test database connection"""
     try:
-        if not initialize_assistant():
-            return jsonify({
-                "error": "Failed to initialize assistant",
-                "success": False
-            }), 500
+        assistant = DatabaseAssistant()
+        with assistant.get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT version();")
+                version = cur.fetchone()[0]
+                print(f"Connected! Running {version.split()[0]} {version.split()[1]}")
+        return True
+    except Exception as e:
+        print(f"Connection failed: {e}")
+        return False
+
+def quick_data_peek():
+    """Take a quick peek at the data"""
+    try:
+        assistant = DatabaseAssistant()
+        with assistant.get_db_connection() as conn:
+            tables = ['customers', 'products', 'invoices']
+            
+            print("Quick peek at your data:\n")
+            
+            for table in tables:
+                try:
+                    count_query = f"SELECT COUNT(*) FROM {table}"
+                    df = pd.read_sql(count_query, conn)
+                    count = df.iloc[0, 0]
+                    
+                    sample_query = f"SELECT * FROM {table} LIMIT 3"
+                    df_sample = pd.read_sql(sample_query, conn)
+                    
+                    print(f"{table.title()}: {count} records")
+                    if not df_sample.empty:
+                        print(f"   Sample: {', '.join(df_sample.columns[:3])}...")
+                    print()
+                    
+                except Exception as e:
+                    print(f"Couldn't peek at {table}: {e}")
+                    
+    except Exception as e:
+        print(f"Data peek error: {e}")
+
+def interactive_setup():
+    """Interactive setup wizard"""
+    print("Welcome to your Database Assistant!")
+    print("Let me help you get started...\n")
+    
+    # Check connection
+    print("Testing database connection...")
+    if not test_connection():
+        print("Can't connect to your database. Check your .env file!")
+        return False
+    
+    # Quick data overview
+    print("\nLet me see what data you have...")
+    quick_data_peek()
+    
+    print("Everything looks good! Ready to start exploring your data?")
+    return True
+
+def main():
+    """Main function with personality"""
+    print("Smart Database Assistant - Now with Human-Like Understanding!")
+    print("=" * 70)
+    
+    try:
+        # Interactive setup
+        if not interactive_setup():
+            return
         
-        # Test with a simple query
-        try:
-            test_response = db_assistant.get_response_from_db_assistant("test connection")
-            status = "Connection successful!"
-        except Exception as e:
-            test_response = f"Test failed: {str(e)}"
-            status = "Connection test encountered issues"
+        print("\nWhat would you like to do?")
+        print("1. Start chatting with your data (Recommended!)")
+        print("2. Explore database structure")
+        print("3. Create a quick backup")
+        print("4. Run performance tests")
+        print("5. Exit")
         
-        return jsonify({
-            "message": status,
-            "test_response": test_response,
-            "success": True,
-            "environment": {
-                "python_version": sys.version,
-                "platform": sys.platform,
-                "cwd": os.getcwd(),
-                "env_vars": list(os.environ.keys())[:10]  # First 10 env vars
-            }
-        })
+        while True:
+            choice = input("\nPick a number (or just hit Enter for #1): ").strip()
+            
+            if choice == '1' or choice == '':
+                print("Let's dive into your data...")
+                assistant = DatabaseAssistant()
+                assistant.run()
+                break
+            elif choice == '2':
+                print("Analyzing your database structure...")
+                analyze_database_schema()
+                break
+            elif choice == '3':
+                print("Creating backup...")
+                backup_database()
+                break
+            elif choice == '4':
+                print("Running performance tests...")
+                run_performance_test()
+                break
+            elif choice == '5':
+                print("See you later!")
+                break
+            else:
+                print("Just pick a number from 1 to 5!")
+    
+    except KeyboardInterrupt:
+        print("\n\nAlright, catch you later!")
+    except Exception as e:
+        logger.error(f"Main error: {e}")
+        print(f"Something went wrong: {e}")
+
+def analyze_database_schema():
+    """Analyze database schema in a friendly way"""
+    try:
+        assistant = DatabaseAssistant()
+        with assistant.get_db_connection() as conn:
+            # Get tables
+            schema_query = """
+            SELECT tablename, 
+                   pg_size_pretty(pg_total_relation_size(schemaname||'.'||tablename)) as size
+            FROM pg_tables 
+            WHERE schemaname = 'public'
+            ORDER BY pg_total_relation_size(schemaname||'.'||tablename) DESC;
+            """
+            
+            df_tables = pd.read_sql(schema_query, conn)
+            print("Your Database Tables (sorted by size):")
+            print(df_tables.to_string(index=False))
+            
+            # Get detailed info for each table
+            for table in df_tables['tablename']:
+                print(f"\n{table.title()} Table Details:")
+                
+                # Column info
+                columns_query = f"""
+                SELECT 
+                    column_name as "Column",
+                    data_type as "Type",
+                    CASE WHEN is_nullable = 'YES' THEN 'Yes' ELSE 'No' END as "Nullable"
+                FROM information_schema.columns 
+                WHERE table_schema = 'public' AND table_name = '{table}'
+                ORDER BY ordinal_position;
+                """
+                
+                df_columns = pd.read_sql(columns_query, conn)
+                print(df_columns.to_string(index=False))
+                
+                # Row count
+                try:
+                    count_df = pd.read_sql(f"SELECT COUNT(*) as total FROM {table}", conn)
+                    total_rows = count_df.iloc[0, 0]
+                    print(f"Total records: {total_rows:,}")
+                except:
+                    print("Couldn't get row count")
+                
+    except Exception as e:
+        print(f"Schema analysis error: {e}")
+
+def backup_database():
+    """Create backup with progress updates"""
+    try:
+        assistant = DatabaseAssistant()
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        
+        important_tables = ['customers', 'products', 'invoices', 'invoice_items']
+        
+        print(f"Creating backup with timestamp: {timestamp}")
+        print("This might take a moment for large tables...")
+        
+        with assistant.get_db_connection() as conn:
+            for i, table in enumerate(important_tables, 1):
+                try:
+                    print(f"[{i}/{len(important_tables)}] Backing up {table}...")
+                    df = pd.read_sql(f"SELECT * FROM {table}", conn)
+                    
+                    filename = f"backup_{table}_{timestamp}.csv"
+                    df.to_csv(filename, index=False, encoding='utf-8-sig')
+                    
+                    print(f"   {len(df)} records -> {filename}")
+                    
+                except Exception as e:
+                    print(f"   Problem with {table}: {e}")
+        
+        print("\nBackup complete! Your data is safe.")
         
     except Exception as e:
-        logger.error(f"Test connection error: {e}")
-        return jsonify({
-            "error": f"Connection test failed: {str(e)}",
-            "success": False
-        }), 500
+        print(f"Backup error: {e}")
 
-@app.route('/debug', methods=['GET'])
-def debug_info():
-    """Debug endpoint to check deployment status"""
-    return jsonify({
-        "message": "Debug info",
-        "python_version": sys.version,
-        "platform": sys.platform,
-        "current_directory": os.getcwd(),
-        "files_in_directory": os.listdir('.') if os.path.exists('.') else [],
-        "environment_variables": {
-            "PORT": os.environ.get('PORT', 'Not set'),
-            "GOOGLE_API_KEY": "Set" if os.environ.get('GOOGLE_API_KEY') else "Not set",
-            "DB_HOST": "Set" if os.environ.get('DB_HOST') else "Not set"
-        },
-        "sys_path": sys.path[:5]  # First 5 paths
-    })
+def run_performance_test():
+    """Performance test with friendly output"""
+    try:
+        assistant = DatabaseAssistant()
+        test_queries = [
+            ("Customer count", "SELECT COUNT(*) FROM customers"),
+            ("Product count", "SELECT COUNT(*) FROM products"), 
+            ("Invoice count", "SELECT COUNT(*) FROM invoices"),
+            ("Customers by city", "SELECT city, COUNT(*) FROM customers GROUP BY city"),
+            ("Products by category", "SELECT category, COUNT(*) FROM products GROUP BY category")
+        ]
+        
+        print("Performance Test - Let's see how fast your database is!")
+        print("=" * 60)
+        
+        total_time = 0
+        
+        with assistant.get_db_connection() as conn:
+            for name, query in test_queries:
+                print(f"Testing: {name}...")
+                start_time = time.time()
+                
+                try:
+                    df = pd.read_sql(query, conn)
+                    execution_time = time.time() - start_time
+                    total_time += execution_time
+                    
+                    speed_indicator = "FAST" if execution_time < 0.1 else "OK" if execution_time < 0.5 else "SLOW"
+                    print(f"   {speed_indicator} {len(df)} rows in {execution_time:.3f}s")
+                    
+                except Exception as e:
+                    execution_time = time.time() - start_time
+                    print(f"   ERROR in {execution_time:.3f}s")
+        
+        print("=" * 60)
+        avg_time = total_time / len(test_queries)
+        
+        if avg_time < 0.1:
+            print("Blazing fast! Your database is lightning quick!")
+        elif avg_time < 0.5:
+            print("Great performance! Nice and speedy.")
+        else:
+            print("Could be faster - consider adding some indexes.")
+        
+        print(f"Average query time: {avg_time:.3f} seconds")
+        
+    except Exception as e:
+        print(f"Performance test error: {e}")
 
-if __name__ == '__main__':
-    # Railway will set PORT environment variable
-    port = int(os.environ.get('PORT', 5000))
+class ConversationMemory:
+    """Remember conversation patterns and user preferences"""
     
-    logger.info(f"Starting Flask app on port {port}")
-    logger.info(f"Python version: {sys.version}")
-    logger.info(f"Current directory: {os.getcwd()}")
+    def __init__(self):
+        self.user_patterns = {
+            'favorite_charts': {},
+            'common_topics': {},
+            'response_style': 'friendly',
+            'technical_level': 'beginner'
+        }
     
-    app.run(host="0.0.0.0", port=port, debug=True)
+    def learn_from_interaction(self, user_input: str, chart_choice: str = None):
+        """Learn from user interactions"""
+        # Track chart preferences
+        if chart_choice:
+            if chart_choice in self.user_patterns['favorite_charts']:
+                self.user_patterns['favorite_charts'][chart_choice] += 1
+            else:
+                self.user_patterns['favorite_charts'][chart_choice] = 1
+        
+        # Track topics
+        keywords = user_input.lower().split()
+        for keyword in keywords:
+            if len(keyword) > 3:  # Skip short words
+                if keyword in self.user_patterns['common_topics']:
+                    self.user_patterns['common_topics'][keyword] += 1
+                else:
+                    self.user_patterns['common_topics'][keyword] = 1
+    
+    def get_smart_suggestions(self) -> List[str]:
+        """Generate smart suggestions based on learned patterns"""
+        suggestions = []
+        
+        # Suggest favorite chart type
+        if self.user_patterns['favorite_charts']:
+            fav_chart = max(self.user_patterns['favorite_charts'], 
+                          key=self.user_patterns['favorite_charts'].get)
+            suggestions.append(f"Want a {fav_chart} chart? (I noticed you like those!)")
+        
+        # Suggest based on common topics
+        if self.user_patterns['common_topics']:
+            common_topic = max(self.user_patterns['common_topics'], 
+                             key=self.user_patterns['common_topics'].get)
+            suggestions.append(f"More questions about {common_topic}?")
+        
+        return suggestions
+
+    def create_chart_from_data(self, data, query):
+        """Create chart from query results and return as base64"""
+        import matplotlib.pyplot as plt
+        import seaborn as sns
+        from io import BytesIO
+        import base64
+        
+        # Convert data to DataFrame
+        df = pd.DataFrame(data)
+        
+        plt.figure(figsize=(10, 6))
+        
+        # Simple chart logic based on data
+        if 'month' in df.columns and 'total_sales' in df.columns:
+            # Sales by month chart
+            plt.plot(df['month'], df['total_sales'].astype(float), marker='o', linewidth=2)
+            plt.title('Sales by Month 2025')
+            plt.xlabel('Month')
+            plt.ylabel('Sales ($)')
+            plt.xticks(rotation=45)
+        elif len(df.columns) >= 2:
+            # Generic bar chart for other data
+            plt.bar(df.iloc[:, 0].astype(str), df.iloc[:, 1].astype(float))
+            plt.title('Database Query Results')
+            plt.xticks(rotation=45)
+        
+        plt.tight_layout()
+        
+        # Convert to base64
+        buffer = BytesIO()
+        plt.savefig(buffer, format='png', dpi=150, bbox_inches='tight')
+        buffer.seek(0)
+        chart_base64 = base64.b64encode(buffer.getvalue()).decode()
+        plt.close()
+        
+        return chart_base64
+
+# ADD STEP 2 CODE HERE:
+
+# ADD STEP 2 CODE HERE:
+def get_db_response(user_query):
+    """Main function to call from Flask app"""
+    global db_assistant_instance
+    
+    try:
+        if db_assistant_instance is None:
+            db_assistant_instance = DatabaseAssistant()
+        
+        response = db_assistant_instance.get_response_from_db_assistant(user_query)
+        return response
+        
+    except Exception as e:
+        return f"Sorry, I encountered an error: {str(e)}"
+
+db_assistant_instance = None
+
+if __name__ == "__main__":
+    main()
+
+
+# In[ ]:
+
+
+
 
