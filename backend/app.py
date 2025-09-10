@@ -1030,7 +1030,7 @@ def create_user(user):
                 'success': True,
                 'message': f'User {username} created successfully',
                 'user_id': new_user_id
-            })
+            }), 500
             
     except Exception as e:
         logger.error(f"Error creating user: {e}")
