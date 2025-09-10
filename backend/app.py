@@ -193,6 +193,59 @@ def login():
             'success': False,
             'message': 'Database not available'
         }), 500
+    
+    try:
+        data = request.get_json()
+        if not data or 'username' not in data or 'password' not in data:
+            return jsonify({
+                'success': False,
+                'message': 'Username and password required'
+            }), 400
+
+        username = data['username'].strip()
+        password = data['password']
+
+        if not username or not password:
+            return jsonify({
+                'success': False,
+                'message': 'Username and password cannot be empty'
+            }), 400
+
+        # Authenticate user
+        auth_result = db_assistant.authenticate_user(username, password)
+
+        if auth_result['success']:
+            user = auth_result['user']
+
+            # Set session
+            session['user_id'] = user['user_id']
+            session['username'] = user['username']
+            session['role'] = user['role']
+            session['full_name'] = user['full_name']
+            session.permanent = True
+
+            logger.info(f"User {username} logged in successfully")
+
+            return jsonify({
+                'success': True,
+                'message': auth_result['message'],
+                'user': {
+                    'username': user['username'],
+                    'role': user['role'],
+                    'full_name': user['full_name']
+                }
+            })
+        else:
+            logger.warning(f"Failed login attempt for username: {username}")
+            return jsonify(auth_result), 401
+
+    except Exception as e:
+        logger.error(f"Login error: {e}")
+        return jsonify({
+            'success': False,
+            'message': 'Login failed due to server error'
+        }), 500
+
 
 @app.route('/admin/audit-log', methods=['GET'])
 @require_role(['admin'])
@@ -334,22 +387,7 @@ if __name__ == '__main__':
     print(f"Starting Flask app on 0.0.0.0:{port}")
     app.run(host='0.0.0.0', port=port, debug=False)
     
-    try:
-        data = request.get_json()
-        if not data or 'username' not in data or 'password' not in data:
-            return jsonify({
-                'success': False,
-                'message': 'Username and password required'
-            }), 400
-        
-        username = data['username'].strip()
-        password = data['password']
-        
-        if not username or not password:
-            return jsonify({
-                'success': False,
-                'message': 'Username and password cannot be empty'
-            }), 400
+###
         
         # Authenticate user
         auth_result = db_assistant.authenticate_user(username, password)
