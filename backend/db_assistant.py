@@ -208,12 +208,19 @@ class DatabaseAssistant:
             with self.get_db_connection() as conn:
                 cursor = conn.cursor()
                 
+                # Ensure details is a string, not JSON
+                if details is not None and not isinstance(details, str):
+                    details = str(details)
+                
                 cursor.execute("""
                     INSERT INTO audit_log (user_id, action, details, timestamp)
                     VALUES (%s, %s, %s, NOW())
                 """, (user_id, action, details))
                 
                 conn.commit()
+                
+        except Exception as e:
+            logger.error(f"Error logging activity: {e}")
                 
         except Exception as e:
             logger.error(f"Error logging activity: {e}")
