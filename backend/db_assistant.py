@@ -613,7 +613,7 @@ class DatabaseAssistant:
         elif 'sales' in user_lower and ('last year' in user_lower or 'total' in user_lower or 'year' in user_lower):
             return {
                 "needs_sql": True,
-                "sql_query": "SELECT SUM(total_amount) AS total_sales FROM invoices WHERE invoice_date >= DATE('now', '-1 year')",
+                "sql_query": "SELECT SUM(total_amount) AS total_sales FROM invoices WHERE invoice_date >= CURRENT_DATE - INTERVAL '1 year'",
                 "response_message": "Here's the total sales from the last year.",
                 "suggested_chart": "none"
             }
