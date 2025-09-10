@@ -13,6 +13,9 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
+app.config['SESSION_COOKIE_SAMESITE'] = 'None'
+app.config['SESSION_COOKIE_SECURE'] = False
+app.config['SESSION_COOKIE_HTTPONLY'] = False
 CORS(app, supports_credentials=True)
 app.secret_key = os.getenv('SECRET_KEY', 'your-secret-key-change-this-in-production')
 
