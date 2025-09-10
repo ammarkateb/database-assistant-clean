@@ -19,6 +19,7 @@ from psycopg2.pool import SimpleConnectionPool
 import matplotlib.pyplot as plt
 import seaborn as sns
 import google.generativeai as genai
+import numpy as np
 from dotenv import load_dotenv
 
 # Setup logging
@@ -495,13 +496,13 @@ class DatabaseAssistant:
         user_id = user_data['user_id']
         role = user_data['role']
         
-        # Process with Gemini using role-specific schema
+        # Process with simple pattern matching
         gemini_response = self.process_with_gemini_for_role(user_input, role)
         
         # Initialize response
         response_data = {
             'success': False,
-            'message': gemini_response.get('response_message', 'Processing your request...'),
+            'message': 'Processing your request...',
             'data': [],
             'chart': None,
             'query': '',
@@ -533,9 +534,18 @@ class DatabaseAssistant:
                     if success and df_result is not None and not df_result.empty:
                         display_data = df_result.head(50).to_dict('records')
                         
+                        # Get the actual result value for message formatting
+                        actual_result = df_result.iloc[0, 0] if len(df_result) > 0 else 0
+                        
+                        # Process the response message with actual data
+                        base_message = gemini_response.get('response_message', 'Query completed successfully.')
+                        
+                        # Replace placeholders with actual values
+                        processed_message = base_message.replace('[COUNT]', str(actual_result))
+                        
                         response_data.update({
                             'success': True,
-                            'message': f"{response_data['message']}\n\n{execution_message}",
+                            'message': processed_message,
                             'data': display_data,
                             'row_count': len(df_result)
                         })
@@ -549,12 +559,27 @@ class DatabaseAssistant:
                                     'chart_base64': chart_base64,
                                     'chart_type': chart_type
                                 }
-                    
-                    # Log query execution
-                    self.log_user_activity(user_id, 'query_execution', user_input, success)
+                    else:
+                        # Handle query execution failure
+                        response_data.update({
+                            'success': False,
+                            'message': execution_message or 'Query execution failed'
+                        })
+                else:
+                    response_data.update({
+                        'success': False,
+                        'message': 'No valid SQL query generated'
+                    })
+                
+                # Log query execution
+                self.log_user_activity(user_id, 'query_execution', user_input, response_data['success'])
             
             else:
-                response_data['success'] = True
+                # No SQL needed - return the response message directly
+                response_data.update({
+                    'success': True,
+                    'message': gemini_response.get('response_message', 'I can help you with customer counts, product lists, and sales data.')
+                })
             
             return response_data
             
@@ -568,57 +593,35 @@ class DatabaseAssistant:
             return response_data
 
     def process_with_gemini_for_role(self, user_input: str, role: str) -> Dict[str, Any]:
-        """Process user input with Gemini using role-specific context"""
-        schema = self.get_database_schema_for_role(role)
+        """Process user input with simple pattern matching"""
+        user_lower = user_input.lower()
         
-        prompt = f"""You are a database assistant. Help users query their database based on their access level.
-
-        {schema}
-
-        User role: {role}
-        User input: "{user_input}"
-
-        ROLE RESTRICTIONS:
-        - VISITOR: Only sales numbers and totals from invoices
-        - VIEWER: Products, sales, cities, invoices. Customer IDs only (no names)
-        - MANAGER: Everything + can add receipts
-        - ADMIN: Full access
-
-        RESPONSE FORMAT (JSON):
-        {{
-            "needs_sql": true/false,
-            "sql_query": "SELECT ... (if needed)",
-            "response_message": "Your conversational response",
-            "suggested_chart": "bar/pie/none"
-        }}
-
-        IMPORTANT: Return valid JSON only.
-        """
-        
-        try:
-            response = self.model.generate_content(prompt)
-            response_text = str(response.text).strip()
-            
-            # Clean and parse JSON
-            response_text = re.sub(r'```json\s*', '', response_text)
-            response_text = re.sub(r'```\s*$', '', response_text)
-            
-            try:
-                return json.loads(response_text)
-            except json.JSONDecodeError:
-                return {
-                    "needs_sql": False,
-                    "sql_query": "",
-                    "response_message": response_text,
-                    "suggested_chart": "none"
-                }
-                
-        except Exception as e:
-            logger.error(f"Gemini processing error: {e}")
+        if 'customer' in user_lower and ('how many' in user_lower or 'count' in user_lower):
+            return {
+                "needs_sql": True,
+                "sql_query": "SELECT COUNT(*) FROM public.customers",
+                "response_message": "We currently have [COUNT] customers in our database.",
+                "suggested_chart": "none"
+            }
+        elif 'product' in user_lower and ('what' in user_lower or 'show' in user_lower or 'list' in user_lower):
+            return {
+                "needs_sql": True,
+                "sql_query": "SELECT name, category, price, stock FROM public.products",
+                "response_message": "Here are our products:",
+                "suggested_chart": "none"
+            }
+        elif 'sales' in user_lower and ('last year' in user_lower or 'total' in user_lower or 'year' in user_lower):
+            return {
+                "needs_sql": True,
+                "sql_query": "SELECT SUM(total_amount) AS total_sales FROM invoices WHERE invoice_date >= DATE('now', '-1 year')",
+                "response_message": "Here's the total sales from the last year.",
+                "suggested_chart": "none"
+            }
+        else:
             return {
                 "needs_sql": False,
                 "sql_query": "",
-                "response_message": "I'm having trouble processing that request.",
+                "response_message": "I can help you with customer counts, product lists, and sales data. Try asking 'how many customers do we have?' or 'what products do we sell?'",
                 "suggested_chart": "none"
             }
 
