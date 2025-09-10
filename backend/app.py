@@ -34,6 +34,21 @@ except Exception as e:
     print(f"Full traceback: {traceback.format_exc()}")
     DB_AVAILABLE = False
 
+# Import facial authentication system
+print("=== IMPORTING FACIAL AUTH SYSTEM ===")
+try:
+    from facial_auth import FacialAuthSystem
+    print("FacialAuthSystem imported successfully")
+    FACIAL_AUTH_IMPORT = True
+except ImportError as e:
+    print(f"ImportError: Could not import FacialAuthSystem: {e}")
+    print(f"Full traceback: {traceback.format_exc()}")
+    FACIAL_AUTH_IMPORT = False
+except Exception as e:
+    print(f"Unexpected error importing FacialAuthSystem: {e}")
+    print(f"Full traceback: {traceback.format_exc()}")
+    FACIAL_AUTH_IMPORT = False
+
 # Initialize database assistant
 db_assistant = None
 if DB_AVAILABLE:
@@ -47,6 +62,22 @@ if DB_AVAILABLE:
         print(f"Full traceback: {traceback.format_exc()}")
         logger.error(f"Failed to initialize DatabaseAssistant: {e}")
         DB_AVAILABLE = False
+
+# Initialize facial auth system
+facial_auth = None
+FACIAL_AUTH_AVAILABLE = False
+if FACIAL_AUTH_IMPORT:
+    print("=== INITIALIZING FACIAL AUTH SYSTEM ===")
+    try:
+        facial_auth = FacialAuthSystem()
+        FACIAL_AUTH_AVAILABLE = True
+        print("Facial authentication system initialized successfully")
+        logger.info("Facial authentication system initialized successfully")
+    except Exception as e:
+        print(f"Failed to initialize facial auth system: {e}")
+        print(f"Full traceback: {traceback.format_exc()}")
+        FACIAL_AUTH_AVAILABLE = False
+        logger.error(f"Failed to initialize facial auth system: {e}")
 
 # Initialize Gemini AI
 print("=== INITIALIZING GEMINI AI ===")
@@ -78,6 +109,7 @@ except Exception as e:
 print(f"=== INITIALIZATION COMPLETE ===")
 print(f"DB_AVAILABLE: {DB_AVAILABLE}")
 print(f"AI_AVAILABLE: {AI_AVAILABLE}")
+print(f"FACIAL_AUTH_AVAILABLE: {FACIAL_AUTH_AVAILABLE}")
 
 # Helper functions
 def get_current_user():
@@ -137,16 +169,18 @@ def health_check():
     return jsonify({
         'status': 'healthy',
         'message': 'Smart AI Database Assistant is running!',
-        'version': '3.0',
+        'version': '3.1',
         'database_available': DB_AVAILABLE,
         'ai_available': AI_AVAILABLE,
+        'facial_auth_available': FACIAL_AUTH_AVAILABLE,
         'authenticated_user': user['username'] if user else None,
         'features': [
             'Role-based authentication',
             'Permission-controlled database queries',
             'Receipt image processing',
             'Chart generation with access controls',
-            'Audit logging'
+            'Audit logging',
+            'Facial recognition authentication'
         ]
     })
 
@@ -159,6 +193,146 @@ def login():
             'success': False,
             'message': 'Database not available'
         }), 500
+
+@app.route('/admin/audit-log', methods=['GET'])
+@require_role(['admin'])
+def get_audit_log(user):
+    """Get audit log (admin only)"""
+    try:
+        limit = request.args.get('limit', 100, type=int)
+        
+        with db_assistant.get_db_connection() as conn:
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT al.timestamp, u.username, al.action, al.details
+                FROM audit_log al
+                LEFT JOIN users u ON al.user_id = u.user_id
+                ORDER BY al.timestamp DESC
+                LIMIT %s
+            """, (limit,))
+            
+            logs = []
+            for row in cursor.fetchall():
+                logs.append({
+                    'timestamp': row[0].isoformat() if row[0] else None,
+                    'username': row[1] or 'System',
+                    'action': row[2],
+                    'details': row[3]
+                })
+            
+            return jsonify({
+                'success': True,
+                'logs': logs
+            })
+            
+    except Exception as e:
+        logger.error(f"Error getting audit log: {e}")
+        return jsonify({
+            'success': False,
+            'message': 'Failed to get audit log'
+        }), 500
+
+# SYSTEM STATUS
+@app.route('/system-status', methods=['GET'])
+@require_auth
+def get_system_status(user):
+    """Get system status for authenticated user"""
+    try:
+        with db_assistant.get_db_connection() as conn:
+            cursor = conn.cursor()
+            
+            # Get basic stats
+            cursor.execute("SELECT COUNT(*) FROM customers")
+            customers_count = cursor.fetchone()[0]
+            
+            cursor.execute("SELECT COUNT(*) FROM products")
+            products_count = cursor.fetchone()[0]
+            
+            cursor.execute("SELECT COUNT(*) FROM invoices")
+            invoices_count = cursor.fetchone()[0]
+            
+            cursor.execute("SELECT COUNT(*) FROM receipt_captures WHERE status = 'pending_review'")
+            pending_receipts = cursor.fetchone()[0]
+            
+            # Get facial auth stats if available
+            facial_auth_stats = {}
+            if FACIAL_AUTH_AVAILABLE:
+                try:
+                    facial_status = facial_auth.get_system_status()
+                    facial_auth_stats = {
+                        'total_facial_users': facial_status.get('total_users', 0),
+                        'facial_admin_users': facial_status.get('admin_users', 0),
+                        'facial_regular_users': facial_status.get('regular_users', 0),
+                        'facial_auth_status': facial_status.get('status', 'unknown')
+                    }
+                except Exception as e:
+                    logger.error(f"Error getting facial auth stats: {e}")
+                    facial_auth_stats = {
+                        'total_facial_users': 0,
+                        'facial_admin_users': 0,
+                        'facial_regular_users': 0,
+                        'facial_auth_status': 'error'
+                    }
+            
+            status = {
+                'database_available': DB_AVAILABLE,
+                'ai_available': AI_AVAILABLE,
+                'facial_auth_available': FACIAL_AUTH_AVAILABLE,
+                'user_role': user['role'],
+                'statistics': {
+                    'customers': customers_count,
+                    'products': products_count,
+                    'invoices': invoices_count,
+                    'pending_receipts': pending_receipts,
+                    **facial_auth_stats
+                }
+            }
+            
+            return jsonify({
+                'success': True,
+                'status': status
+            })
+            
+    except Exception as e:
+        logger.error(f"System status error: {e}")
+        return jsonify({
+            'success': False,
+            'message': f'Failed to get system status: {str(e)}'
+        }), 500
+
+# ERROR HANDLERS
+@app.errorhandler(404)
+def not_found(error):
+    return jsonify({
+        'success': False,
+        'message': 'Endpoint not found'
+    }), 404
+
+@app.errorhandler(500)
+def internal_error(error):
+    return jsonify({
+        'success': False,
+        'message': 'Internal server error'
+    }), 500
+
+if __name__ == '__main__':
+    # Set session lifetime
+    app.permanent_session_lifetime = timedelta(hours=24)
+    
+    # Handle PORT environment variable properly for Railway
+    port_env = os.environ.get('PORT', '5000')
+    print(f"PORT environment variable: {port_env}")
+    
+    try:
+        port = int(port_env)
+        print(f"Successfully parsed port: {port}")
+    except (ValueError, TypeError):
+        print(f"Failed to parse port '{port_env}', using default 5000")
+        port = 5000
+    
+    print(f"Starting Flask app on 0.0.0.0:{port}")
+    app.run(host='0.0.0.0', port=port, debug=False)
     
     try:
         data = request.get_json()
@@ -380,6 +554,276 @@ def get_chart_data(user, chart_id):
             'message': 'Failed to get chart data'
         }), 500
 
+# FACIAL AUTHENTICATION ENDPOINTS
+@app.route('/facial-auth/authenticate', methods=['POST'])
+def facial_authenticate():
+    """Authenticate user using facial recognition"""
+    if not FACIAL_AUTH_AVAILABLE:
+        return jsonify({
+            'success': False,
+            'message': 'Facial authentication not available'
+        }), 500
+    
+    try:
+        data = request.get_json()
+        
+        if not data or 'image' not in data:
+            return jsonify({
+                'success': False,
+                'message': 'Image data required'
+            }), 400
+        
+        image_base64 = data['image']
+        
+        # Clean base64 string if it has data URL prefix
+        if image_base64.startswith('data:'):
+            image_base64 = image_base64.split(',')[1]
+        
+        # Authenticate using facial recognition
+        result = facial_auth.authenticate_user(image_base64)
+        
+        if result['success']:
+            # Log successful facial auth
+            user_ip = request.environ.get('HTTP_X_FORWARDED_FOR', request.remote_addr)
+            facial_auth.log_access(
+                result['user']['id'],
+                result['user']['name'],
+                'facial_login',
+                'Face authentication successful',
+                user_ip,
+                True
+            )
+            
+            logger.info(f"Facial authentication successful for user: {result['user']['name']}")
+        else:
+            # Log failed facial auth
+            user_ip = request.environ.get('HTTP_X_FORWARDED_FOR', request.remote_addr)
+            facial_auth.log_access(
+                None,
+                'Unknown',
+                'facial_login_failed',
+                'Face authentication failed',
+                user_ip,
+                False
+            )
+            
+            logger.warning("Facial authentication failed")
+        
+        return jsonify(result)
+        
+    except Exception as e:
+        logger.error(f"Facial authentication error: {e}")
+        return jsonify({
+            'success': False,
+            'message': f'Authentication failed: {str(e)}'
+        }), 500
+
+@app.route('/facial-auth/create-admin', methods=['POST'])
+def create_facial_admin():
+    """Create admin user for facial authentication"""
+    if not FACIAL_AUTH_AVAILABLE:
+        return jsonify({
+            'success': False,
+            'message': 'Facial authentication not available'
+        }), 500
+    
+    try:
+        data = request.get_json()
+        
+        if not data or 'name' not in data or 'image' not in data:
+            return jsonify({
+                'success': False,
+                'message': 'Name and image data required'
+            }), 400
+        
+        name = data['name'].strip()
+        image_base64 = data['image']
+        
+        if not name:
+            return jsonify({
+                'success': False,
+                'message': 'Name cannot be empty'
+            }), 400
+        
+        # Clean base64 string if it has data URL prefix
+        if image_base64.startswith('data:'):
+            image_base64 = image_base64.split(',')[1]
+        
+        # Create admin user
+        result = facial_auth.create_admin_user(name, image_base64)
+        
+        if result['success']:
+            logger.info(f"Facial auth admin user created: {name}")
+        
+        return jsonify(result)
+        
+    except Exception as e:
+        logger.error(f"Create facial admin error: {e}")
+        return jsonify({
+            'success': False,
+            'message': f'Failed to create admin user: {str(e)}'
+        }), 500
+
+@app.route('/facial-auth/create-user', methods=['POST'])
+def create_facial_user():
+    """Create regular user for facial authentication"""
+    if not FACIAL_AUTH_AVAILABLE:
+        return jsonify({
+            'success': False,
+            'message': 'Facial authentication not available'
+        }), 500
+    
+    try:
+        data = request.get_json()
+        
+        if not data or 'name' not in data or 'image' not in data:
+            return jsonify({
+                'success': False,
+                'message': 'Name and image data required'
+            }), 400
+        
+        name = data['name'].strip()
+        image_base64 = data['image']
+        permission_level = data.get('permission_level', 'read_only')
+        
+        if not name:
+            return jsonify({
+                'success': False,
+                'message': 'Name cannot be empty'
+            }), 400
+        
+        # Validate permission level
+        valid_permissions = ['read_only', 'admin']
+        if permission_level not in valid_permissions:
+            return jsonify({
+                'success': False,
+                'message': f'Invalid permission level. Must be one of: {", ".join(valid_permissions)}'
+            }), 400
+        
+        # Clean base64 string if it has data URL prefix
+        if image_base64.startswith('data:'):
+            image_base64 = image_base64.split(',')[1]
+        
+        # Create regular user
+        result = facial_auth.create_regular_user(name, image_base64, permission_level)
+        
+        if result['success']:
+            logger.info(f"Facial auth user created: {name} with permission: {permission_level}")
+        
+        return jsonify(result)
+        
+    except Exception as e:
+        logger.error(f"Create facial user error: {e}")
+        return jsonify({
+            'success': False,
+            'message': f'Failed to create user: {str(e)}'
+        }), 500
+
+@app.route('/facial-auth/users', methods=['GET'])
+def get_facial_users():
+    """Get all facial authentication users"""
+    if not FACIAL_AUTH_AVAILABLE:
+        return jsonify({
+            'success': False,
+            'message': 'Facial authentication not available'
+        }), 500
+    
+    try:
+        users = facial_auth.get_authorized_users()
+        
+        return jsonify({
+            'success': True,
+            'users': users,
+            'count': len(users)
+        })
+        
+    except Exception as e:
+        logger.error(f"Get facial users error: {e}")
+        return jsonify({
+            'success': False,
+            'message': f'Failed to get users: {str(e)}'
+        }), 500
+
+@app.route('/facial-auth/delete-user/<user_id>', methods=['DELETE'])
+def delete_facial_user(user_id):
+    """Delete facial authentication user"""
+    if not FACIAL_AUTH_AVAILABLE:
+        return jsonify({
+            'success': False,
+            'message': 'Facial authentication not available'
+        }), 500
+    
+    try:
+        result = facial_auth.delete_user(user_id)
+        
+        if result['success']:
+            logger.info(f"Facial auth user deleted: {user_id}")
+        
+        return jsonify(result)
+        
+    except Exception as e:
+        logger.error(f"Delete facial user error: {e}")
+        return jsonify({
+            'success': False,
+            'message': f'Failed to delete user: {str(e)}'
+        }), 500
+
+@app.route('/facial-auth/status', methods=['GET'])
+def get_facial_auth_status():
+    """Get facial authentication system status"""
+    if not FACIAL_AUTH_AVAILABLE:
+        return jsonify({
+            'success': False,
+            'message': 'Facial authentication not available',
+            'status': {
+                'available': False,
+                'total_users': 0,
+                'admin_users': 0,
+                'regular_users': 0
+            }
+        })
+    
+    try:
+        status = facial_auth.get_system_status()
+        
+        return jsonify({
+            'success': True,
+            'status': status
+        })
+        
+    except Exception as e:
+        logger.error(f"Facial auth status error: {e}")
+        return jsonify({
+            'success': False,
+            'message': f'Failed to get status: {str(e)}'
+        }), 500
+
+@app.route('/facial-auth/logs', methods=['GET'])
+def get_facial_auth_logs():
+    """Get facial authentication access logs"""
+    if not FACIAL_AUTH_AVAILABLE:
+        return jsonify({
+            'success': False,
+            'message': 'Facial authentication not available'
+        }), 500
+    
+    try:
+        limit = request.args.get('limit', 50, type=int)
+        logs = facial_auth.get_access_logs(limit)
+        
+        return jsonify({
+            'success': True,
+            'logs': logs,
+            'count': len(logs)
+        })
+        
+    except Exception as e:
+        logger.error(f"Get facial auth logs error: {e}")
+        return jsonify({
+            'success': False,
+            'message': f'Failed to get logs: {str(e)}'
+        }), 500
+
 # RECEIPT PROCESSING ENDPOINTS
 @app.route('/receipt/upload', methods=['POST'])
 @require_role(['manager', 'admin'])
@@ -489,7 +933,7 @@ def get_all_users(user):
             cursor = conn.cursor()
             
             cursor.execute("""
-                SELECT user_id, username, full_name, role, created_at, last_login, is_active
+                SELECT user_id, username, full_name, role, created_at, last_login, is_active, email
                 FROM users
                 ORDER BY created_at DESC
             """)
@@ -503,7 +947,8 @@ def get_all_users(user):
                     'role': row[3],
                     'created_at': row[4].isoformat() if row[4] else None,
                     'last_login': row[5].isoformat() if row[5] else None,
-                    'is_active': row[6]
+                    'is_active': row[6],
+                    'email': row[7] if len(row) > 7 else ''
                 })
             
             return jsonify({
@@ -592,122 +1037,3 @@ def create_user(user):
         return jsonify({
             'success': False,
             'message': 'Failed to create user'
-        }), 500
-
-@app.route('/admin/audit-log', methods=['GET'])
-@require_role(['admin'])
-def get_audit_log(user):
-    """Get audit log (admin only)"""
-    try:
-        limit = request.args.get('limit', 100, type=int)
-        
-        with db_assistant.get_db_connection() as conn:
-            cursor = conn.cursor()
-            
-            cursor.execute("""
-                SELECT al.timestamp, u.username, al.action, al.details
-                FROM audit_log al
-                LEFT JOIN users u ON al.user_id = u.user_id
-                ORDER BY al.timestamp DESC
-                LIMIT %s
-            """, (limit,))
-            
-            logs = []
-            for row in cursor.fetchall():
-                logs.append({
-                    'timestamp': row[0].isoformat() if row[0] else None,
-                    'username': row[1] or 'System',
-                    'action': row[2],
-                    'details': row[3]
-                })
-            
-            return jsonify({
-                'success': True,
-                'logs': logs
-            })
-            
-    except Exception as e:
-        logger.error(f"Error getting audit log: {e}")
-        return jsonify({
-            'success': False,
-            'message': 'Failed to get audit log'
-        }), 500
-
-# SYSTEM STATUS
-@app.route('/system-status', methods=['GET'])
-@require_auth
-def get_system_status(user):
-    """Get system status for authenticated user"""
-    try:
-        with db_assistant.get_db_connection() as conn:
-            cursor = conn.cursor()
-            
-            # Get basic stats
-            cursor.execute("SELECT COUNT(*) FROM customers")
-            customers_count = cursor.fetchone()[0]
-            
-            cursor.execute("SELECT COUNT(*) FROM products")
-            products_count = cursor.fetchone()[0]
-            
-            cursor.execute("SELECT COUNT(*) FROM invoices")
-            invoices_count = cursor.fetchone()[0]
-            
-            cursor.execute("SELECT COUNT(*) FROM receipt_captures WHERE status = 'pending_review'")
-            pending_receipts = cursor.fetchone()[0]
-            
-            status = {
-                'database_available': DB_AVAILABLE,
-                'ai_available': AI_AVAILABLE,
-                'user_role': user['role'],
-                'statistics': {
-                    'customers': customers_count,
-                    'products': products_count,
-                    'invoices': invoices_count,
-                    'pending_receipts': pending_receipts
-                }
-            }
-            
-            return jsonify({
-                'success': True,
-                'status': status
-            })
-            
-    except Exception as e:
-        logger.error(f"System status error: {e}")
-        return jsonify({
-            'success': False,
-            'message': f'Failed to get system status: {str(e)}'
-        }), 500
-
-# ERROR HANDLERS
-@app.errorhandler(404)
-def not_found(error):
-    return jsonify({
-        'success': False,
-        'message': 'Endpoint not found'
-    }), 404
-
-@app.errorhandler(500)
-def internal_error(error):
-    return jsonify({
-        'success': False,
-        'message': 'Internal server error'
-    }), 500
-
-if __name__ == '__main__':
-    # Set session lifetime
-    app.permanent_session_lifetime = timedelta(hours=24)
-    
-    # Handle PORT environment variable properly for Railway
-    port_env = os.environ.get('PORT', '5000')
-    print(f"PORT environment variable: {port_env}")
-    
-    try:
-        port = int(port_env)
-        print(f"Successfully parsed port: {port}")
-    except (ValueError, TypeError):
-        print(f"Failed to parse port '{port_env}', using default 5000")
-        port = 5000
-    
-    print(f"Starting Flask app on 0.0.0.0:{port}")
-    app.run(host='0.0.0.0', port=port, debug=False)
