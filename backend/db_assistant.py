@@ -593,38 +593,153 @@ class DatabaseAssistant:
             return response_data
 
     def process_with_gemini_for_role(self, user_input: str, role: str) -> Dict[str, Any]:
-        """Process user input with simple pattern matching"""
-        user_lower = user_input.lower()
-        
-        if 'customer' in user_lower and ('how many' in user_lower or 'count' in user_lower):
-            return {
-                "needs_sql": True,
-                "sql_query": "SELECT COUNT(*) FROM public.customers",
-                "response_message": "We currently have [COUNT] customers in our database.",
-                "suggested_chart": "none"
-            }
-        elif 'product' in user_lower and ('what' in user_lower or 'show' in user_lower or 'list' in user_lower):
-            return {
-                "needs_sql": True,
-                "sql_query": "SELECT name, category, price, stock FROM public.products",
-                "response_message": "Here are our products:",
-                "suggested_chart": "none"
-            }
-        elif 'sales' in user_lower and ('last year' in user_lower or 'total' in user_lower or 'year' in user_lower):
-            return {
-                "needs_sql": True,
-                "sql_query": "SELECT SUM(total_amount) AS total_sales FROM invoices WHERE invoice_date >= CURRENT_DATE - INTERVAL '1 year'",
-                "response_message": "Here's the total sales from the last year.",
-                "suggested_chart": "none"
-            }
-        else:
-            return {
-                "needs_sql": False,
-                "sql_query": "",
-                "response_message": "I can help you with customer counts, product lists, and sales data. Try asking 'how many customers do we have?' or 'what products do we sell?'",
-                "suggested_chart": "none"
-            }
+        """Process user input with Gemini AI for intelligent responses"""
+        try:
+            # Get database schema for user's role
+            schema = self.get_database_schema_for_role(role)
+            
+            # Create comprehensive prompt for Gemini
+            prompt = f"""
+    You are an intelligent database assistant. Analyze the user's question and provide a response.
 
+    DATABASE SCHEMA:
+    {schema}
+
+    USER QUESTION: "{user_input}"
+    USER ROLE: {role}
+
+    IMPORTANT INSTRUCTIONS:
+    1. If the question requires a database query, generate ONLY PostgreSQL-compatible SQL
+    2. Use CURRENT_DATE for current date, not DATE('now')
+    3. Use INTERVAL '1 year' syntax, not SQLite syntax
+    4. For role-based access:
+       - Visitor: Only access invoices table for sales data
+       - Viewer: Cannot see customer names (use customer_id)
+       - Manager/Admin: Full access to all tables
+    5. Always use proper PostgreSQL syntax
+    6. Keep responses natural and conversational
+
+    RESPONSE FORMAT (JSON):
+    {{
+        "needs_sql": true/false,
+        "sql_query": "SELECT statement here" (if needs_sql is true),
+        "response_message": "Natural language response with [COUNT] placeholder for numbers",
+        "suggested_chart": "none/bar/pie"
+    }}
+
+    Examples of good responses:
+    - For "how many customers": {{"needs_sql": true, "sql_query": "SELECT COUNT(*) FROM customers", "response_message": "We currently have [COUNT] customers in our database.", "suggested_chart": "none"}}
+    - For "show sales by month": Include appropriate GROUP BY and chart suggestion
+    - For general questions: {{"needs_sql": false, "response_message": "Helpful response", "suggested_chart": "none"}}
+
+    Generate the JSON response:
+    """
+
+            # Call Gemini AI
+            response = self.model.generate_content(prompt)
+            response_text = response.text.strip()
+            
+            # Try to parse JSON response
+            try:
+                # Clean up response text - remove any markdown formatting
+                if response_text.startswith('```'):
+                    lines = response_text.split('\n')
+                    json_lines = []
+                    in_code = False
+                    for line in lines:
+                        if line.startswith('```'):
+                            in_code = not in_code
+                            continue
+                        if in_code:
+                            json_lines.append(line)
+                    response_text = '\n'.join(json_lines)
+                
+                # Parse the JSON
+                gemini_response = json.loads(response_text)
+                
+                # Validate required fields
+                if 'needs_sql' not in gemini_response:
+                    gemini_response['needs_sql'] = False
+                if 'response_message' not in gemini_response:
+                    gemini_response['response_message'] = "I can help you with your database questions."
+                if 'suggested_chart' not in gemini_response:
+                    gemini_response['suggested_chart'] = 'none'
+                if gemini_response['needs_sql'] and 'sql_query' not in gemini_response:
+                    gemini_response['sql_query'] = ""
+                    
+                logger.info(f"Gemini AI processed query successfully: {user_input}")
+                return gemini_response
+                
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse Gemini response as JSON: {e}")
+                logger.error(f"Raw response: {response_text}")
+                
+                # Fallback: try to extract SQL if present
+                sql_match = re.search(r'SELECT[^;]*', response_text, re.IGNORECASE | re.DOTALL)
+                if sql_match:
+                    return {
+                        "needs_sql": True,
+                        "sql_query": sql_match.group(0).strip(),
+                        "response_message": "Here's what I found:",
+                        "suggested_chart": "none"
+                    }
+                else:
+                    # Pure text response fallback
+                    return {
+                        "needs_sql": False,
+                        "sql_query": "",
+                        "response_message": response_text,
+                        "suggested_chart": "none"
+                    }
+                    
+        except Exception as e:
+            logger.error(f"Gemini AI processing failed: {e}")
+            
+            # Emergency fallback to simple pattern matching
+            user_lower = user_input.lower()
+            
+            if 'customer' in user_lower and ('how many' in user_lower or 'count' in user_lower):
+                return {
+                    "needs_sql": True,
+                    "sql_query": "SELECT COUNT(*) FROM customers",
+                    "response_message": "We currently have [COUNT] customers in our database.",
+                    "suggested_chart": "none"
+                }
+            elif 'product' in user_lower and ('what' in user_lower or 'show' in user_lower or 'list' in user_lower):
+                return {
+                    "needs_sql": True,
+                    "sql_query": "SELECT name, category, price, stock FROM products LIMIT 10",
+                    "response_message": "Here are our products:",
+                    "suggested_chart": "none"
+                }
+            elif 'sales' in user_lower and ('year' in user_lower or 'total' in user_lower):
+                return {
+                    "needs_sql": True,
+                    "sql_query": "SELECT SUM(total_amount) AS total_sales FROM invoices WHERE invoice_date >= CURRENT_DATE - INTERVAL '1 year'",
+                    "response_message": "Here's the total sales from the last year: $[COUNT]",
+                    "suggested_chart": "none"
+                }
+            elif 'invoice' in user_lower and ('how many' in user_lower or 'count' in user_lower):
+                return {
+                    "needs_sql": True,
+                    "sql_query": "SELECT COUNT(*) FROM invoices",
+                    "response_message": "We currently have [COUNT] invoices in our system.",
+                    "suggested_chart": "none"
+                }
+            elif 'receipt' in user_lower and ('how many' in user_lower or 'count' in user_lower):
+                return {
+                    "needs_sql": True,
+                    "sql_query": "SELECT COUNT(*) FROM receipt_captures",
+                    "response_message": "We currently have [COUNT] receipts in our system.",
+                    "suggested_chart": "none"
+                }
+            else:
+                return {
+                    "needs_sql": False,
+                    "sql_query": "",
+                    "response_message": "I'm your AI database assistant. I can help you with customer counts, product information, sales data, invoices, and receipts. Try asking questions like 'How many customers do we have?' or 'Show me our products'.",
+                    "suggested_chart": "none"
+                }
     # EXISTING METHODS (updated for compatibility)
     def execute_query(self, sql_query: str) -> Tuple[Optional[pd.DataFrame], bool, str]:
         """Execute SQL query and return results"""
