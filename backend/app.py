@@ -55,9 +55,10 @@ if DB_AVAILABLE:
         logger.info("DatabaseAssistant initialized successfully")
     except Exception as e:
         print(f"Failed to initialize DatabaseAssistant: {e}")
+        print(f"Full traceback: {traceback.format_exc()}")
         logger.error(f"Failed to initialize DatabaseAssistant: {e}")
         DB_AVAILABLE = False
-
+        
 # Initialize facial auth
 if FACIAL_AUTH_AVAILABLE:
     print("=== INITIALIZING FACIAL AUTH SYSTEM ===")

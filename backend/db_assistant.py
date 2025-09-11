@@ -57,7 +57,8 @@ class DatabaseAssistant:
             "user": os.getenv("DB_USER", "postgres.chdjmbylbqdsavazecll"),
             "password": os.getenv("DB_PASSWORD", "Hexen2002_23"),
             "host": os.getenv("DB_HOST", "aws-1-eu-west-2.pooler.supabase.com"),
-            "port": os.getenv("DB_PORT", "6543")
+            "port": os.getenv("DB_PORT", "6543"),
+            "sslmode": "require"
         }
     
     def setup_ai_model(self):
@@ -75,11 +76,20 @@ class DatabaseAssistant:
     def setup_database_pool(self):
         """Setup database connection pool"""
         try:
+            print(f"=== ATTEMPTING DB CONNECTION ===")
+            print(f"DB params: {self.db_params}")
+            
             self.connection_pool = SimpleConnectionPool(
                 minconn=1, maxconn=5, **self.db_params
             )
+            print("=== DB CONNECTION SUCCESS ===")
             logger.info("Database connection pool created")
         except Exception as e:
+            print(f"=== DB CONNECTION FAILED ===")
+            print(f"Error: {e}")
+            print(f"Error type: {type(e)}")
+            import traceback
+            print(f"Traceback: {traceback.format_exc()}")
             logger.error(f"Failed to create connection pool: {e}")
             raise
     
