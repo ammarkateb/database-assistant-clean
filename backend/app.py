@@ -299,29 +299,6 @@ def logout():
         'message': 'Logged out successfully'
     })
 
-@app.route('/me', methods=['GET'])
-@require_auth
-def get_current_user_info(user):
-    """Get current user information"""
-    try:
-        # Get user's accessible charts
-        charts = db_assistant.get_user_accessible_charts(user['user_id'])
-        
-        return jsonify({
-            'success': True,
-            'user': user,
-            'accessible_charts': len(charts),
-            'charts': charts
-        })
-        
-    except Exception as e:
-        logger.error(f"Error getting user info: {e}")
-        return jsonify({
-            'success': False,
-            'message': 'Failed to get user information'
-        }), 500
-
-# QUERY ENDPOINTS
 @app.route('/query', methods=['POST'])
 @require_auth
 def handle_authenticated_query(user):
@@ -352,10 +329,17 @@ def handle_authenticated_query(user):
         response_data['authenticated_user'] = user['username']
         response_data['user_role'] = user['role']
         
+        # Debug log for chart issues
+        if response_data.get('chart'):
+            logger.info(f"Chart generated successfully for query: {user_query}")
+        elif 'chart' in user_query.lower():
+            logger.warning(f"Chart requested but not generated for: {user_query}")
+        
         return jsonify(response_data)
         
     except Exception as e:
         logger.error(f"Error processing query: {e}")
+        logger.error(f"Full traceback: {traceback.format_exc()}")
         return jsonify({
             'success': False,
             'message': f'Query processing failed: {str(e)}'

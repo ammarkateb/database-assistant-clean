@@ -36,6 +36,8 @@ logger = logging.getLogger(__name__)
 # Configure matplotlib for better charts
 plt.style.use('default')
 sns.set_palette("husl")
+plt.rcParams['figure.facecolor'] = 'white'
+plt.rcParams['axes.facecolor'] = 'white'
 
 class DatabaseAssistant:
     def __init__(self):
@@ -510,7 +512,7 @@ class DatabaseAssistant:
         user_id = user_data['user_id']
         role = user_data['role']
         
-        # Process with simple pattern matching
+        # Process with improved Gemini AI
         gemini_response = self.process_with_gemini_for_role(user_input, role)
         
         # Initialize response
@@ -548,14 +550,28 @@ class DatabaseAssistant:
                     if success and df_result is not None and not df_result.empty:
                         display_data = df_result.head(50).to_dict('records')
                         
-                        # Get the actual result value for message formatting
-                        actual_result = df_result.iloc[0, 0] if len(df_result) > 0 else 0
+                        # Get the appropriate result value for message formatting
+                        actual_result = None
+                        if len(df_result) > 0:
+                            # For single value results
+                            if len(df_result.columns) == 1 and len(df_result) == 1:
+                                actual_result = df_result.iloc[0, 0]
+                            # For count results
+                            elif 'count' in df_result.columns[0].lower():
+                                actual_result = df_result.iloc[0, 0]
+                            # For year-based results
+                            elif len(df_result.columns) >= 2:
+                                actual_result = len(df_result)
                         
                         # Process the response message with actual data
                         base_message = gemini_response.get('response_message', 'Query completed successfully.')
                         
                         # Replace placeholders with actual values
-                        processed_message = base_message.replace('[COUNT]', str(actual_result))
+                        if actual_result is not None:
+                            processed_message = base_message.replace('[COUNT]', str(actual_result))
+                            processed_message = processed_message.replace('[VALUE]', str(actual_result))
+                        else:
+                            processed_message = base_message
                         
                         response_data.update({
                             'success': True,
@@ -564,10 +580,11 @@ class DatabaseAssistant:
                             'row_count': len(df_result)
                         })
                         
-                        # Create chart if appropriate
+                        # Create chart if appropriate and data is suitable
                         chart_type = gemini_response.get('suggested_chart', 'none')
-                        if chart_type in ['bar', 'pie']:
-                            chart_base64 = self.create_chart(df_result, chart_type, user_input)
+                        if chart_type in ['bar', 'pie'] and len(df_result.columns) >= 2:
+                            chart_title = f"Data Analysis - {user_input[:50]}..."
+                            chart_base64 = self.create_chart(df_result, chart_type, chart_title)
                             if chart_base64:
                                 response_data['chart'] = {
                                     'chart_base64': chart_base64,
@@ -606,13 +623,13 @@ class DatabaseAssistant:
             })
             return response_data
 
-def process_with_gemini_for_role(self, user_input: str, role: str) -> Dict[str, Any]:
-    """Process user input with Gemini AI for intelligent responses - IMPROVED VERSION"""
-    try:
-        schema = self.get_database_schema_for_role(role)
-        
-        prompt = f"""
-You are a professional, conversational database assistant. Your responses should be natural, helpful, and intelligent.
+    def process_with_gemini_for_role(self, user_input: str, role: str) -> Dict[str, Any]:
+        """Process user input with Gemini AI for intelligent responses - FIXED VERSION"""
+        try:
+            schema = self.get_database_schema_for_role(role)
+            
+            prompt = f"""
+You are a professional, intelligent database assistant that provides accurate and natural responses.
 
 DATABASE SCHEMA:
 {schema}
@@ -620,13 +637,13 @@ DATABASE SCHEMA:
 USER QUESTION: "{user_input}"
 USER ROLE: {role}
 
-INSTRUCTIONS:
-1. Analyze the user's question and determine if it requires a database query
-2. If SQL is needed, generate ONLY PostgreSQL-compatible SQL (use CURRENT_DATE, INTERVAL syntax)
-3. Provide a natural, conversational response that directly answers the question
-4. For chart suggestions: use "bar" for comparisons/trends, "pie" for categorical breakdowns, "none" for simple counts/lists
-5. Keep responses professional but friendly and conversational
-6. Replace numerical placeholders with [COUNT] for dynamic insertion
+CRITICAL INSTRUCTIONS:
+1. For count/number queries, generate SQL that returns a single COUNT(*) value
+2. For year-specific queries (2023, 2024, 2025), use EXTRACT(YEAR FROM invoice_date) = YEAR
+3. For "invoices per year" queries, GROUP BY the year to show breakdown by year
+4. For chart requests, ensure the SQL returns proper columns for visualization
+5. Be precise with SQL - use exact PostgreSQL syntax
+6. Provide natural, conversational responses that match the data being returned
 
 ROLE PERMISSIONS:
 - Visitor: Only sales/invoices data
@@ -638,106 +655,126 @@ RESPONSE FORMAT (JSON):
 {{
     "needs_sql": true/false,
     "sql_query": "SELECT statement" (if needs_sql is true),
-    "response_message": "Conversational response with [COUNT] for numbers",
+    "response_message": "Natural response with [COUNT] for single values",
     "suggested_chart": "none/bar/pie"
 }}
 
 EXAMPLES:
 
-For "how many customers do we have":
+For "how many invoices do we have in 2024":
 {{
     "needs_sql": true,
-    "sql_query": "SELECT COUNT(*) FROM customers",
-    "response_message": "We currently have [COUNT] customers in our database.",
+    "sql_query": "SELECT COUNT(*) FROM invoices WHERE EXTRACT(YEAR FROM invoice_date) = 2024",
+    "response_message": "We have [COUNT] invoices from 2024.",
     "suggested_chart": "none"
 }}
 
-For "show me sales by month this year":
+For "how many invoices per year":
 {{
     "needs_sql": true,
-    "sql_query": "SELECT EXTRACT(MONTH FROM invoice_date) as month, SUM(total_amount) as total_sales FROM invoices WHERE EXTRACT(YEAR FROM invoice_date) = EXTRACT(YEAR FROM CURRENT_DATE) GROUP BY EXTRACT(MONTH FROM invoice_date) ORDER BY month",
-    "response_message": "Here's your monthly sales breakdown for this year:",
+    "sql_query": "SELECT EXTRACT(YEAR FROM invoice_date) as year, COUNT(*) as invoice_count FROM invoices GROUP BY EXTRACT(YEAR FROM invoice_date) ORDER BY year",
+    "response_message": "Here's the breakdown of invoices by year:",
     "suggested_chart": "bar"
 }}
 
-For "what's our most popular product category":
+For "make me a bar chart for sales by month":
 {{
     "needs_sql": true,
-    "sql_query": "SELECT p.category, COUNT(ii.product_id) as sales_count FROM products p JOIN invoice_items ii ON p.product_id = ii.product_id GROUP BY p.category ORDER BY sales_count DESC LIMIT 5",
-    "response_message": "Here are our top-selling product categories:",
-    "suggested_chart": "pie"
+    "sql_query": "SELECT EXTRACT(MONTH FROM invoice_date) as month, SUM(total_amount) as total_sales FROM invoices WHERE EXTRACT(YEAR FROM invoice_date) = EXTRACT(YEAR FROM CURRENT_DATE) GROUP BY EXTRACT(MONTH FROM invoice_date) ORDER BY month",
+    "response_message": "Here's your monthly sales chart for this year:",
+    "suggested_chart": "bar"
 }}
 
-For "hello" or general greetings:
-{{
-    "needs_sql": false,
-    "response_message": "Hello! I'm here to help you explore and analyze your business data. You can ask me about customers, sales, products, or any other data insights you need.",
-    "suggested_chart": "none"
-}}
-
-Generate a JSON response that matches this format exactly:
+Generate your response in valid JSON format:
 """
 
-        response = self.model.generate_content(prompt)
-        response_text = response.text.strip()
-        
-        # Clean up response text
-        if response_text.startswith('```'):
-            lines = response_text.split('\n')
-            json_lines = []
-            in_code = False
-            for line in lines:
-                if line.startswith('```'):
-                    in_code = not in_code
-                    continue
-                if in_code:
-                    json_lines.append(line)
-            response_text = '\n'.join(json_lines)
-        
-        try:
-            gemini_response = json.loads(response_text)
+            response = self.model.generate_content(prompt)
+            response_text = response.text.strip()
             
-            # Validate and fix response structure
-            if 'needs_sql' not in gemini_response:
-                gemini_response['needs_sql'] = False
-            if 'response_message' not in gemini_response:
-                gemini_response['response_message'] = "I can help you with your database questions."
-            if 'suggested_chart' not in gemini_response:
-                gemini_response['suggested_chart'] = 'none'
-            if gemini_response['needs_sql'] and 'sql_query' not in gemini_response:
-                gemini_response['sql_query'] = ""
+            # Clean up response text
+            if response_text.startswith('```'):
+                lines = response_text.split('\n')
+                json_lines = []
+                in_code = False
+                for line in lines:
+                    if line.startswith('```'):
+                        in_code = not in_code
+                        continue
+                    if in_code:
+                        json_lines.append(line)
+                response_text = '\n'.join(json_lines)
+            
+            try:
+                gemini_response = json.loads(response_text)
                 
-            logger.info(f"Gemini AI processed query successfully: {user_input}")
-            return gemini_response
-            
-        except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse Gemini response as JSON: {e}")
-            logger.error(f"Raw response: {response_text}")
-            
-            # Try to extract SQL if present
-            sql_match = re.search(r'SELECT[^;]*', response_text, re.IGNORECASE | re.DOTALL)
-            if sql_match:
+                # Validate and fix response structure
+                if 'needs_sql' not in gemini_response:
+                    gemini_response['needs_sql'] = False
+                if 'response_message' not in gemini_response:
+                    gemini_response['response_message'] = "I can help you with your database questions."
+                if 'suggested_chart' not in gemini_response:
+                    gemini_response['suggested_chart'] = 'none'
+                if gemini_response['needs_sql'] and 'sql_query' not in gemini_response:
+                    gemini_response['sql_query'] = ""
+                    
+                logger.info(f"Gemini AI processed query successfully: {user_input}")
+                return gemini_response
+                
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse Gemini response as JSON: {e}")
+                logger.error(f"Raw response: {response_text}")
+                
+                # Enhanced fallback with specific pattern matching
+                return self._get_fallback_response(user_input, role)
+                
+        except Exception as e:
+            logger.error(f"Gemini AI processing failed: {e}")
+            return self._get_fallback_response(user_input, role)
+
+    def _get_fallback_response(self, user_input: str, role: str) -> Dict[str, Any]:
+        """Enhanced fallback with better pattern matching"""
+        user_lower = user_input.lower()
+        
+        # Count queries for specific years
+        if 'invoice' in user_lower and any(word in user_lower for word in ['how many', 'count', 'number']):
+            if '2024' in user_lower:
                 return {
                     "needs_sql": True,
-                    "sql_query": sql_match.group(0).strip(),
-                    "response_message": "Here's what I found:",
+                    "sql_query": "SELECT COUNT(*) FROM invoices WHERE EXTRACT(YEAR FROM invoice_date) = 2024",
+                    "response_message": "We have [COUNT] invoices from 2024.",
                     "suggested_chart": "none"
+                }
+            elif '2023' in user_lower:
+                return {
+                    "needs_sql": True,
+                    "sql_query": "SELECT COUNT(*) FROM invoices WHERE EXTRACT(YEAR FROM invoice_date) = 2023",
+                    "response_message": "We have [COUNT] invoices from 2023.",
+                    "suggested_chart": "none"
+                }
+            elif '2025' in user_lower:
+                return {
+                    "needs_sql": True,
+                    "sql_query": "SELECT COUNT(*) FROM invoices WHERE EXTRACT(YEAR FROM invoice_date) = 2025",
+                    "response_message": "We have [COUNT] invoices from 2025.",
+                    "suggested_chart": "none"
+                }
+            elif 'per year' in user_lower or 'by year' in user_lower:
+                return {
+                    "needs_sql": True,
+                    "sql_query": "SELECT EXTRACT(YEAR FROM invoice_date) as year, COUNT(*) as invoice_count FROM invoices GROUP BY EXTRACT(YEAR FROM invoice_date) ORDER BY year",
+                    "response_message": "Here's the breakdown of invoices by year:",
+                    "suggested_chart": "bar"
                 }
             else:
                 return {
-                    "needs_sql": False,
-                    "response_message": response_text or "I can help you with your database questions.",
+                    "needs_sql": True,
+                    "sql_query": "SELECT COUNT(*) FROM invoices",
+                    "response_message": "We have [COUNT] total invoices in our system.",
                     "suggested_chart": "none"
                 }
-                
-    except Exception as e:
-        logger.error(f"Gemini AI processing failed: {e}")
-        
-        # Enhanced fallback with better pattern matching
-        user_lower = user_input.lower()
         
         # Customer queries
-        if any(word in user_lower for word in ['customer', 'client']) and any(word in user_lower for word in ['how many', 'count', 'number']):
+        elif any(word in user_lower for word in ['customer', 'client']) and any(word in user_lower for word in ['how many', 'count', 'number']):
             return {
                 "needs_sql": True,
                 "sql_query": "SELECT COUNT(*) FROM customers",
@@ -760,45 +797,22 @@ Generate a JSON response that matches this format exactly:
                 "suggested_chart": "none"
             }
         
-        # Sales/Invoice queries with specific year handling
-        elif any(word in user_lower for word in ['invoice']) and any(word in user_lower for word in ['how many', 'count', 'number']):
-            if '2024' in user_lower:
-                return {
-                    "needs_sql": True,
-                    "sql_query": "SELECT COUNT(*) FROM invoices WHERE EXTRACT(YEAR FROM invoice_date) = 2024",
-                    "response_message": "We have [COUNT] invoices from 2024.",
-                    "suggested_chart": "none"
-                }
-            elif '2023' in user_lower:
-                return {
-                    "needs_sql": True,
-                    "sql_query": "SELECT COUNT(*) FROM invoices WHERE EXTRACT(YEAR FROM invoice_date) = 2023",
-                    "response_message": "We have [COUNT] invoices from 2023.",
-                    "suggested_chart": "none"
-                }
-            elif '2025' in user_lower:
-                return {
-                    "needs_sql": True,
-                    "sql_query": "SELECT COUNT(*) FROM invoices WHERE EXTRACT(YEAR FROM invoice_date) = 2025",
-                    "response_message": "We have [COUNT] invoices from 2025.",
-                    "suggested_chart": "none"
-                }
-            else:
-                return {
-                    "needs_sql": True,
-                    "sql_query": "SELECT COUNT(*) FROM invoices",
-                    "response_message": "We have [COUNT] total invoices in our system.",
-                    "suggested_chart": "none"
-                }
-        
         # Chart requests for sales
-        elif any(word in user_lower for word in ['chart', 'bar chart']) and 'sales' in user_lower:
-            return {
-                "needs_sql": True,
-                "sql_query": "SELECT EXTRACT(MONTH FROM invoice_date) as month, SUM(total_amount) as total_sales FROM invoices WHERE EXTRACT(YEAR FROM invoice_date) = EXTRACT(YEAR FROM CURRENT_DATE) GROUP BY EXTRACT(MONTH FROM invoice_date) ORDER BY month",
-                "response_message": "Here's a bar chart showing your monthly sales for this year:",
-                "suggested_chart": "bar"
-            }
+        elif any(word in user_lower for word in ['chart', 'bar chart', 'pie chart']) and 'sales' in user_lower:
+            if 'month' in user_lower:
+                return {
+                    "needs_sql": True,
+                    "sql_query": "SELECT EXTRACT(MONTH FROM invoice_date) as month, SUM(total_amount) as total_sales FROM invoices WHERE EXTRACT(YEAR FROM invoice_date) = EXTRACT(YEAR FROM CURRENT_DATE) GROUP BY EXTRACT(MONTH FROM invoice_date) ORDER BY month",
+                    "response_message": "Here's your monthly sales chart for this year:",
+                    "suggested_chart": "bar"
+                }
+            elif 'year' in user_lower:
+                return {
+                    "needs_sql": True,
+                    "sql_query": "SELECT EXTRACT(YEAR FROM invoice_date) as year, SUM(total_amount) as total_sales FROM invoices GROUP BY EXTRACT(YEAR FROM invoice_date) ORDER BY year",
+                    "response_message": "Here's your yearly sales breakdown:",
+                    "suggested_chart": "bar"
+                }
         
         # Greeting responses
         elif any(word in user_lower for word in ['hello', 'hi', 'hey']):
@@ -815,7 +829,6 @@ Generate a JSON response that matches this format exactly:
                 "response_message": "I'm here to help you explore your business data! You can ask me about customer counts, product information, sales data, invoices, and I can even create charts. Try asking something like 'How many customers do we have?' or 'Show me sales by month'.",
                 "suggested_chart": "none"
             }
-
 
     # EXISTING METHODS (updated for compatibility)
     def execute_query(self, sql_query: str) -> Tuple[Optional[pd.DataFrame], bool, str]:
@@ -838,36 +851,96 @@ Generate a JSON response that matches this format exactly:
             return None, False, f"Database error: {str(e)}"
 
     def create_chart(self, df: pd.DataFrame, chart_type: str, title: str = "Chart") -> Optional[str]:
-        """Create chart and return as base64 string"""
+        """Create chart and return as base64 string with improved styling"""
         if df.empty or len(df.columns) < 2:
             return None
         
         try:
-            fig, ax = plt.subplots(figsize=(12, 8))
+            # Create figure with proper sizing and styling
+            plt.figure(figsize=(10, 6))
+            fig, ax = plt.subplots(figsize=(10, 6))
+            
+            # Set background colors
+            fig.patch.set_facecolor('white')
+            ax.set_facecolor('white')
             
             x_data = df.iloc[:, 0].astype(str)
             y_data = pd.to_numeric(df.iloc[:, 1], errors='coerce')
             
+            # Remove any NaN values
+            mask = ~y_data.isna()
+            x_data = x_data[mask]
+            y_data = y_data[mask]
+            
+            if len(x_data) == 0:
+                plt.close(fig)
+                return None
+            
             if chart_type.lower() == 'pie':
+                # Create pie chart with better colors and labels
                 colors = plt.cm.Set3(range(len(df)))
-                ax.pie(y_data, labels=x_data, autopct='%1.1f%%', colors=colors, startangle=90)
+                wedges, texts, autotexts = ax.pie(
+                    y_data, 
+                    labels=x_data, 
+                    autopct='%1.1f%%', 
+                    colors=colors, 
+                    startangle=90,
+                    textprops={'fontsize': 10}
+                )
+                
+                # Improve text readability
+                for autotext in autotexts:
+                    autotext.set_color('black')
+                    autotext.set_fontweight('bold')
                 
             elif chart_type.lower() == 'bar':
-                bars = ax.bar(range(len(df)), y_data, color=plt.cm.viridis(np.linspace(0, 1, len(df))))
+                # Create bar chart with better styling
+                bars = ax.bar(
+                    range(len(df)), 
+                    y_data, 
+                    color=plt.cm.viridis(np.linspace(0, 1, len(df))),
+                    edgecolor='black',
+                    linewidth=0.5
+                )
+                
+                # Add value labels on bars
+                for i, (bar, value) in enumerate(zip(bars, y_data)):
+                    height = bar.get_height()
+                    ax.text(bar.get_x() + bar.get_width()/2., height + height*0.01,
+                           f'{value:,.0f}', ha='center', va='bottom', fontweight='bold')
+                
+                # Set labels and formatting
                 ax.set_xlabel(df.columns[0], fontsize=12, fontweight='bold')
                 ax.set_ylabel(df.columns[1], fontsize=12, fontweight='bold')
                 ax.set_xticks(range(len(df)))
                 ax.set_xticklabels(x_data, rotation=45, ha='right')
+                
+                # Add grid for better readability
+                ax.grid(True, alpha=0.3, axis='y')
+                ax.set_axisbelow(True)
             
-            ax.set_title(title, fontsize=16, fontweight='bold', pad=20)
+            # Set title with better formatting
+            ax.set_title(title, fontsize=14, fontweight='bold', pad=20)
             
+            # Improve layout
             plt.tight_layout()
+            
+            # Save to base64
             buffer = io.BytesIO()
-            plt.savefig(buffer, format='png', dpi=300, bbox_inches='tight', facecolor='white')
+            plt.savefig(
+                buffer, 
+                format='png', 
+                dpi=150, 
+                bbox_inches='tight', 
+                facecolor='white',
+                edgecolor='none'
+            )
             buffer.seek(0)
             
             chart_base64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
             plt.close(fig)
+            
+            logger.info(f"Chart created successfully: {chart_type}")
             return chart_base64
             
         except Exception as e:
