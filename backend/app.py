@@ -843,6 +843,97 @@ def internal_error(error):
         'message': 'Internal server error'
     }), 500
 
+# Add this endpoint to your existing app.py file (after other endpoints)
+
+@app.route('/facial-auth/register', methods=['POST'])
+@require_auth
+def facial_register(user):
+    """Register user's face for facial authentication"""
+    if not FACIAL_AUTH_AVAILABLE:
+        return jsonify({
+            'success': False,
+            'message': 'Facial authentication not available'
+        }), 500
+    
+    try:
+        data = request.get_json()
+        
+        if not data or 'image' not in data:
+            return jsonify({
+                'success': False,
+                'message': 'Image data required'
+            }), 400
+        
+        image_base64 = data['image']
+        
+        # Clean base64 string if it has data URL prefix
+        if image_base64.startswith('data:'):
+            image_base64 = image_base64.split(',')[1]
+        
+        # Register face for authenticated user
+        # Map user role to facial auth permission level
+        permission_map = {
+            'visitor': 'read_only',
+            'viewer': 'read_only', 
+            'manager': 'read_only',
+            'admin': 'admin'
+        }
+        
+        permission_level = permission_map.get(user['role'], 'read_only')
+        
+        # Create/update facial auth user
+        result = facial_auth.create_regular_user(
+            user['full_name'] or user['username'], 
+            image_base64, 
+            permission_level
+        )
+        
+        if result['success']:
+            # Update user record to indicate face recognition is enabled
+            try:
+                with db_assistant.get_db_connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("""
+                        UPDATE users 
+                        SET face_recognition_enabled = true 
+                        WHERE user_id = %s
+                    """, (user['user_id'],))
+                    conn.commit()
+            except Exception as e:
+                logger.warning(f"Failed to update user face recognition flag: {e}")
+            
+            # Log successful face registration
+            if hasattr(facial_auth, 'log_access'):
+                try:
+                    facial_auth.log_access(
+                        user['user_id'],
+                        user['username'],
+                        'face_registration',
+                        'Face registration successful',
+                        request.environ.get('HTTP_X_FORWARDED_FOR', request.remote_addr),
+                        True
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to log face registration: {e}")
+            
+            logger.info(f"Face registration successful for user: {user['username']}")
+            
+            return jsonify({
+                'success': True,
+                'message': 'Face registration completed successfully! You can now login with face recognition.',
+                'user_id': result.get('user_id')
+            })
+        else:
+            logger.warning(f"Face registration failed for user {user['username']}: {result.get('message')}")
+            return jsonify(result), 400
+            
+    except Exception as e:
+        logger.error(f"Face registration error: {e}")
+        return jsonify({
+            'success': False,
+            'message': f'Face registration failed: {str(e)}'
+        }), 500
+
 if __name__ == '__main__':
     # Set session lifetime
     app.permanent_session_lifetime = timedelta(hours=24)
