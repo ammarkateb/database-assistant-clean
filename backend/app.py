@@ -26,6 +26,9 @@ FACIAL_AUTH_AVAILABLE = False
 db_assistant = None
 facial_auth = None
 
+# Conversation history storage for chat memory
+conversation_histories = {}
+
 # Import database assistant
 print("=== IMPORTING DATABASE ASSISTANT ===")
 try:
@@ -106,6 +109,26 @@ def get_current_user():
         }
     return None
 
+def get_user_conversation_history(user_id):
+    """Get conversation history for a user"""
+    return conversation_histories.get(str(user_id), [])
+
+def add_to_conversation_history(user_id, sender, content):
+    """Add message to user's conversation history"""
+    user_id_str = str(user_id)
+    if user_id_str not in conversation_histories:
+        conversation_histories[user_id_str] = []
+    
+    conversation_histories[user_id_str].append({
+        'sender': sender,
+        'content': content,
+        'timestamp': datetime.now().isoformat()
+    })
+    
+    # Keep only last 20 messages for memory efficiency
+    if len(conversation_histories[user_id_str]) > 20:
+        conversation_histories[user_id_str] = conversation_histories[user_id_str][-20:]
+
 def require_auth(func):
     """Decorator to require authentication"""
     def wrapper(*args, **kwargs):
@@ -151,8 +174,8 @@ def health_check():
     user = get_current_user()
     return jsonify({
         'status': 'healthy',
-        'message': 'Smart AI Database Assistant is running!',
-        'version': '3.1',
+        'message': 'Neural Pulse AI Database Assistant is running!',
+        'version': '4.0',
         'database_available': DB_AVAILABLE,
         'ai_available': AI_AVAILABLE,
         'facial_auth_available': FACIAL_AUTH_AVAILABLE,
@@ -160,10 +183,12 @@ def health_check():
         'features': [
             'Role-based authentication',
             'Permission-controlled database queries',
-            'Receipt image processing',
+            'Conversation memory system',
+            'Enhanced facial recognition with tolerance',
+            'Purple-teal themed UI',
+            'Admin user management',
             'Chart generation with access controls',
-            'Audit logging',
-            'Facial recognition authentication'
+            'Audit logging'
         ]
     })
 
@@ -207,12 +232,17 @@ def login():
             session['full_name'] = user['full_name']
             session.permanent = True
             
+            # Initialize conversation history for user
+            if str(user['user_id']) not in conversation_histories:
+                conversation_histories[str(user['user_id'])] = []
+            
             logger.info(f"User {username} logged in successfully")
             
             return jsonify({
                 'success': True,
                 'message': auth_result['message'],
                 'user': {
+                    'user_id': user['user_id'],
                     'username': user['username'],
                     'role': user['role'],
                     'full_name': user['full_name']
@@ -290,7 +320,14 @@ def setup_initial_admin():
 @app.route('/logout', methods=['POST'])
 def logout():
     """User logout"""
-    username = session.get('username', 'Unknown')
+    user = get_current_user()
+    username = user['username'] if user else 'Unknown'
+    user_id = user['user_id'] if user else None
+    
+    # Clear conversation history for this user session
+    if user_id and str(user_id) in conversation_histories:
+        del conversation_histories[str(user_id)]
+    
     session.clear()
     logger.info(f"User {username} logged out")
     
@@ -302,7 +339,7 @@ def logout():
 @app.route('/query', methods=['POST'])
 @require_auth
 def handle_authenticated_query(user):
-    """Handle database queries with authentication and permissions"""
+    """Handle database queries with authentication, permissions, and conversation memory"""
     try:
         data = request.get_json()
         
@@ -322,12 +359,27 @@ def handle_authenticated_query(user):
 
         logger.info(f"Processing query from {user['username']} ({user['role']}): {user_query}")
         
-        # Execute query with user permissions
-        response_data = db_assistant.execute_query_with_permissions(user_query, user)
+        # Get conversation history for this user
+        conversation_history = get_user_conversation_history(user['user_id'])
+        
+        # Add user's query to conversation history
+        add_to_conversation_history(user['user_id'], 'user', user_query)
+        
+        # Execute query with user permissions and conversation context
+        response_data = db_assistant.execute_query_with_permissions(
+            user_query, 
+            user, 
+            conversation_history=conversation_history
+        )
+        
+        # Add AI response to conversation history
+        if response_data.get('success') and response_data.get('message'):
+            add_to_conversation_history(user['user_id'], 'assistant', response_data['message'])
         
         # Add user context to response
         response_data['authenticated_user'] = user['username']
         response_data['user_role'] = user['role']
+        response_data['conversation_context'] = len(conversation_history) > 0
         
         # Debug log for chart issues
         if response_data.get('chart'):
@@ -344,11 +396,11 @@ def handle_authenticated_query(user):
             'success': False,
             'message': f'Query processing failed: {str(e)}'
         }), 500
-
-# FACIAL AUTHENTICATION ENDPOINTS
+    
+    # FACIAL AUTHENTICATION ENDPOINTS
 @app.route('/facial-auth/authenticate', methods=['POST'])
 def facial_authenticate():
-    """Authenticate user using facial recognition"""
+    """Authenticate user using enhanced facial recognition with tolerance"""
     if not FACIAL_AUTH_AVAILABLE:
         return jsonify({
             'success': False,
@@ -370,22 +422,28 @@ def facial_authenticate():
         if image_base64.startswith('data:'):
             image_base64 = image_base64.split(',')[1]
         
-        # Authenticate using facial recognition
-        result = facial_auth.authenticate_user(image_base64)
+        # Authenticate using enhanced facial recognition with tolerance
+        result = facial_auth.authenticate_user_with_tolerance(image_base64, tolerance=0.75)
         
         if result['success']:
+            # Initialize conversation history for facial auth user
+            user_id = result['user']['id']
+            if str(user_id) not in conversation_histories:
+                conversation_histories[str(user_id)] = []
+            
             # Log successful facial auth
             user_ip = request.environ.get('HTTP_X_FORWARDED_FOR', request.remote_addr)
             facial_auth.log_access(
                 result['user']['id'],
                 result['user']['name'],
                 'facial_login',
-                'Face authentication successful',
+                'Enhanced face authentication successful',
                 user_ip,
-                True
+                True,
+                confidence_score=result.get('confidence', 1.0)
             )
             
-            logger.info(f"Facial authentication successful for user: {result['user']['name']}")
+            logger.info(f"Enhanced facial authentication successful for user: {result['user']['name']} (confidence: {result.get('confidence', 1.0):.2f})")
         else:
             # Log failed facial auth
             user_ip = request.environ.get('HTTP_X_FORWARDED_FOR', request.remote_addr)
@@ -393,12 +451,12 @@ def facial_authenticate():
                 None,
                 'Unknown',
                 'facial_login_failed',
-                'Face authentication failed',
+                'Enhanced face authentication failed',
                 user_ip,
                 False
             )
             
-            logger.warning("Facial authentication failed")
+            logger.warning("Enhanced facial authentication failed")
         
         return jsonify(result)
         
@@ -407,6 +465,115 @@ def facial_authenticate():
         return jsonify({
             'success': False,
             'message': f'Authentication failed: {str(e)}'
+        }), 500
+
+@app.route('/facial-auth/register', methods=['POST'])
+@require_auth
+def facial_register(user):
+    """Register user's face for enhanced facial authentication"""
+    if not FACIAL_AUTH_AVAILABLE:
+        return jsonify({
+            'success': False,
+            'message': 'Facial authentication not available'
+        }), 500
+    
+    try:
+        data = request.get_json()
+        
+        if not data or 'image' not in data:
+            return jsonify({
+                'success': False,
+                'message': 'Image data required'
+            }), 400
+        
+        image_base64 = data['image']
+        
+        # Clean base64 string if it has data URL prefix
+        if image_base64.startswith('data:'):
+            image_base64 = image_base64.split(',')[1]
+        
+        # Register face for authenticated user with enhanced system
+        # Map user role to facial auth permission level
+        permission_map = {
+            'visitor': 'read_only',
+            'viewer': 'read_only', 
+            'manager': 'read_only',
+            'admin': 'admin'
+        }
+        
+        permission_level = permission_map.get(user['role'], 'read_only')
+        
+        # Create/update facial auth user with enhanced tolerance system
+        result = facial_auth.register_user_with_tolerance(
+            user['full_name'] or user['username'], 
+            image_base64, 
+            permission_level
+        )
+        
+        if result['success']:
+            # Update user record to indicate face recognition is enabled
+            try:
+                with db_assistant.get_db_connection() as conn:
+                    cursor = conn.cursor()
+                    # First check if column exists
+                    cursor.execute("""
+                        SELECT column_name FROM information_schema.columns 
+                        WHERE table_name = 'users' AND column_name = 'face_recognition_enabled'
+                    """)
+                    
+                    if cursor.fetchone():
+                        cursor.execute("""
+                            UPDATE users 
+                            SET face_recognition_enabled = true 
+                            WHERE user_id = %s
+                        """, (user['user_id'],))
+                    else:
+                        # Add column if it doesn't exist
+                        cursor.execute("""
+                            ALTER TABLE users 
+                            ADD COLUMN IF NOT EXISTS face_recognition_enabled BOOLEAN DEFAULT false
+                        """)
+                        cursor.execute("""
+                            UPDATE users 
+                            SET face_recognition_enabled = true 
+                            WHERE user_id = %s
+                        """, (user['user_id'],))
+                    
+                    conn.commit()
+            except Exception as e:
+                logger.warning(f"Failed to update user face recognition flag: {e}")
+            
+            # Log successful face registration with enhanced system
+            try:
+                facial_auth.log_access(
+                    result.get('user_id', user['user_id']),
+                    user['username'],
+                    'face_registration',
+                    'Enhanced face registration successful with multiple samples',
+                    request.environ.get('HTTP_X_FORWARDED_FOR', request.remote_addr),
+                    True
+                )
+            except Exception as e:
+                logger.warning(f"Failed to log face registration: {e}")
+            
+            logger.info(f"Enhanced face registration successful for user: {user['username']}")
+            
+            return jsonify({
+                'success': True,
+                'message': 'Face registration completed successfully with enhanced recognition! You can now login with face recognition even in different lighting conditions.',
+                'user_id': result.get('user_id'),
+                'enhanced_features': True,
+                'tolerance_enabled': True
+            })
+        else:
+            logger.warning(f"Enhanced face registration failed for user {user['username']}: {result.get('message')}")
+            return jsonify(result), 400
+            
+    except Exception as e:
+        logger.error(f"Enhanced face registration error: {e}")
+        return jsonify({
+            'success': False,
+            'message': f'Face registration failed: {str(e)}'
         }), 500
 
 @app.route('/facial-auth/create-admin', methods=['POST'])
@@ -440,11 +607,11 @@ def create_facial_admin():
         if image_base64.startswith('data:'):
             image_base64 = image_base64.split(',')[1]
         
-        # Create admin user
+        # Create admin user with enhanced facial recognition
         result = facial_auth.create_admin_user(name, image_base64)
         
         if result['success']:
-            logger.info(f"Facial auth admin user created: {name}")
+            logger.info(f"Enhanced facial auth admin user created: {name}")
         
         return jsonify(result)
         
@@ -455,64 +622,9 @@ def create_facial_admin():
             'message': f'Failed to create admin user: {str(e)}'
         }), 500
 
-@app.route('/facial-auth/create-user', methods=['POST'])
-def create_facial_user():
-    """Create regular user for facial authentication"""
-    if not FACIAL_AUTH_AVAILABLE:
-        return jsonify({
-            'success': False,
-            'message': 'Facial authentication not available'
-        }), 500
-    
-    try:
-        data = request.get_json()
-        
-        if not data or 'name' not in data or 'image' not in data:
-            return jsonify({
-                'success': False,
-                'message': 'Name and image data required'
-            }), 400
-        
-        name = data['name'].strip()
-        image_base64 = data['image']
-        permission_level = data.get('permission_level', 'read_only')
-        
-        if not name:
-            return jsonify({
-                'success': False,
-                'message': 'Name cannot be empty'
-            }), 400
-        
-        # Validate permission level
-        valid_permissions = ['read_only', 'admin']
-        if permission_level not in valid_permissions:
-            return jsonify({
-                'success': False,
-                'message': f'Invalid permission level. Must be one of: {", ".join(valid_permissions)}'
-            }), 400
-        
-        # Clean base64 string if it has data URL prefix
-        if image_base64.startswith('data:'):
-            image_base64 = image_base64.split(',')[1]
-        
-        # Create regular user
-        result = facial_auth.create_regular_user(name, image_base64, permission_level)
-        
-        if result['success']:
-            logger.info(f"Facial auth user created: {name} with permission: {permission_level}")
-        
-        return jsonify(result)
-        
-    except Exception as e:
-        logger.error(f"Create facial user error: {e}")
-        return jsonify({
-            'success': False,
-            'message': f'Failed to create user: {str(e)}'
-        }), 500
-
 @app.route('/facial-auth/users', methods=['GET'])
 def get_facial_users():
-    """Get all facial authentication users"""
+    """Get all facial authentication users with enhanced info"""
     if not FACIAL_AUTH_AVAILABLE:
         return jsonify({
             'success': False,
@@ -520,12 +632,19 @@ def get_facial_users():
         }), 500
     
     try:
-        users = facial_auth.get_authorized_users()
+        users = facial_auth.get_all_users()
         
         return jsonify({
             'success': True,
             'users': users,
-            'count': len(users)
+            'count': len(users),
+            'enhanced_system': True,
+            'features': [
+                'Multiple face samples per user',
+                'Tolerance-based matching',
+                'Confidence scoring',
+                'Enhanced recognition accuracy'
+            ]
         })
         
     except Exception as e:
@@ -536,8 +655,9 @@ def get_facial_users():
         }), 500
 
 @app.route('/facial-auth/delete-user/<user_id>', methods=['DELETE'])
-def delete_facial_user(user_id):
-    """Delete facial authentication user"""
+@require_role(['admin'])
+def delete_facial_user(current_user, user_id):
+    """Delete facial authentication user (admin only)"""
     if not FACIAL_AUTH_AVAILABLE:
         return jsonify({
             'success': False,
@@ -548,7 +668,20 @@ def delete_facial_user(user_id):
         result = facial_auth.delete_user(user_id)
         
         if result['success']:
-            logger.info(f"Facial auth user deleted: {user_id}")
+            # Log admin action
+            try:
+                facial_auth.log_access(
+                    current_user['user_id'],
+                    current_user['username'],
+                    'delete_facial_user',
+                    f'Deleted facial auth user: {user_id}',
+                    request.environ.get('HTTP_X_FORWARDED_FOR', request.remote_addr),
+                    True
+                )
+            except Exception as e:
+                logger.warning(f"Failed to log user deletion: {e}")
+            
+            logger.info(f"Admin {current_user['username']} deleted facial auth user: {user_id}")
         
         return jsonify(result)
         
@@ -561,7 +694,7 @@ def delete_facial_user(user_id):
 
 @app.route('/facial-auth/status', methods=['GET'])
 def get_facial_auth_status():
-    """Get facial authentication system status"""
+    """Get enhanced facial authentication system status"""
     if not FACIAL_AUTH_AVAILABLE:
         return jsonify({
             'success': False,
@@ -570,12 +703,19 @@ def get_facial_auth_status():
                 'available': False,
                 'total_users': 0,
                 'admin_users': 0,
-                'regular_users': 0
+                'regular_users': 0,
+                'enhanced_features': False
             }
         })
     
     try:
         status = facial_auth.get_system_status()
+        
+        # Add enhanced system info
+        status['enhanced_features'] = True
+        status['tolerance_matching'] = True
+        status['multiple_samples'] = True
+        status['confidence_scoring'] = True
         
         return jsonify({
             'success': True,
@@ -599,7 +739,8 @@ def get_all_users(user):
             cursor = conn.cursor()
             
             cursor.execute("""
-                SELECT user_id, username, full_name, role, created_at, last_login, is_active, email
+                SELECT user_id, username, full_name, role, created_at, last_login, is_active, email,
+                       COALESCE(face_recognition_enabled, false) as face_recognition_enabled
                 FROM users
                 ORDER BY created_at DESC
             """)
@@ -614,12 +755,14 @@ def get_all_users(user):
                     'created_at': row[4].isoformat() if row[4] else None,
                     'last_login': row[5].isoformat() if row[5] else None,
                     'is_active': row[6],
-                    'email': row[7] if len(row) > 7 else ''
+                    'email': row[7] if len(row) > 7 else '',
+                    'face_recognition_enabled': row[8] if len(row) > 8 else False
                 })
             
             return jsonify({
                 'success': True,
-                'users': users
+                'users': users,
+                'total_count': len(users)
             })
             
     except Exception as e:
@@ -650,6 +793,13 @@ def create_user(user):
         role = data['role'].strip().lower()
         email = data['email'].strip()
         
+        # Validate inputs
+        if not username or not password or not full_name or not email:
+            return jsonify({
+                'success': False,
+                'message': 'All fields must be non-empty'
+            }), 400
+        
         # Validate role
         valid_roles = ['visitor', 'viewer', 'manager', 'admin']
         if role not in valid_roles:
@@ -673,10 +823,18 @@ def create_user(user):
                     'message': 'Username already exists'
                 }), 400
             
+            # Check if email already exists
+            cursor.execute("SELECT email FROM users WHERE email = %s", (email,))
+            if cursor.fetchone():
+                return jsonify({
+                    'success': False,
+                    'message': 'Email already exists'
+                }), 400
+            
             # Create user
             cursor.execute("""
-                INSERT INTO users (username, email, password_hash, salt, full_name, role, is_active)
-                VALUES (%s, %s, %s, %s, %s, %s, true)
+                INSERT INTO users (username, email, password_hash, salt, full_name, role, is_active, face_recognition_enabled)
+                VALUES (%s, %s, %s, %s, %s, %s, true, false)
                 RETURNING user_id
             """, (username, email, password_hash, salt, full_name, role))
             
@@ -695,7 +853,15 @@ def create_user(user):
             return jsonify({
                 'success': True,
                 'message': f'User {username} created successfully',
-                'user_id': new_user_id
+                'user': {
+                    'user_id': new_user_id,
+                    'username': username,
+                    'full_name': full_name,
+                    'role': role,
+                    'email': email,
+                    'is_active': True,
+                    'face_recognition_enabled': False
+                }
             }), 201
             
     except Exception as e:
@@ -705,6 +871,78 @@ def create_user(user):
             'message': 'Failed to create user'
         }), 500
 
+@app.route('/admin/delete-user/<int:user_id>', methods=['DELETE'])
+@require_role(['admin'])
+def delete_user(current_user, user_id):
+    """Delete user (admin only)"""
+    try:
+        if user_id == current_user['user_id']:
+            return jsonify({
+                'success': False,
+                'message': 'Cannot delete your own account'
+            }), 400
+        
+        with db_assistant.get_db_connection() as conn:
+            cursor = conn.cursor()
+            
+            # Get user info before deletion
+            cursor.execute("SELECT username, role FROM users WHERE user_id = %s", (user_id,))
+            user_info = cursor.fetchone()
+            
+            if not user_info:
+                return jsonify({
+                    'success': False,
+                    'message': 'User not found'
+                }), 404
+            
+            username, role = user_info
+            
+            # Prevent deletion of last admin
+            if role == 'admin':
+                cursor.execute("SELECT COUNT(*) FROM users WHERE role = 'admin' AND is_active = true")
+                admin_count = cursor.fetchone()[0]
+                if admin_count <= 1:
+                    return jsonify({
+                        'success': False,
+                        'message': 'Cannot delete the last admin user'
+                    }), 400
+            
+            # Delete user
+            cursor.execute("DELETE FROM users WHERE user_id = %s", (user_id,))
+            
+            if cursor.rowcount == 0:
+                return jsonify({
+                    'success': False,
+                    'message': 'User not found'
+                }), 404
+            
+            conn.commit()
+            
+            # Clear conversation history for deleted user
+            if str(user_id) in conversation_histories:
+                del conversation_histories[str(user_id)]
+            
+            # Log admin action
+            db_assistant.log_user_activity(
+                current_user['user_id'], 
+                'delete_user', 
+                f'Deleted user {username} (ID: {user_id})'
+            )
+            
+            logger.info(f"Admin {current_user['username']} deleted user {username} (ID: {user_id})")
+            
+            return jsonify({
+                'success': True,
+                'message': f'User {username} deleted successfully'
+            })
+            
+    except Exception as e:
+        logger.error(f"Error deleting user: {e}")
+        return jsonify({
+            'success': False,
+            'message': 'Failed to delete user'
+        }), 500
+    
 @app.route('/admin/audit-log', methods=['GET'])
 @require_role(['admin'])
 def get_audit_log(user):
@@ -734,7 +972,8 @@ def get_audit_log(user):
             
             return jsonify({
                 'success': True,
-                'logs': logs
+                'logs': logs,
+                'total_shown': len(logs)
             })
             
     except Exception as e:
@@ -742,6 +981,137 @@ def get_audit_log(user):
         return jsonify({
             'success': False,
             'message': 'Failed to get audit log'
+        }), 500
+
+@app.route('/admin/system-stats', methods=['GET'])
+@require_role(['admin'])
+def get_system_stats(user):
+    """Get detailed system statistics (admin only)"""
+    try:
+        with db_assistant.get_db_connection() as conn:
+            cursor = conn.cursor()
+            
+            # Get user statistics
+            cursor.execute("""
+                SELECT role, COUNT(*) as count, 
+                       COUNT(CASE WHEN is_active THEN 1 END) as active_count
+                FROM users 
+                GROUP BY role
+                ORDER BY role
+            """)
+            user_stats = []
+            for row in cursor.fetchall():
+                user_stats.append({
+                    'role': row[0],
+                    'total': row[1],
+                    'active': row[2]
+                })
+            
+            # Get conversation statistics
+            total_conversations = len(conversation_histories)
+            active_conversations = sum(1 for history in conversation_histories.values() if len(history) > 0)
+            total_messages = sum(len(history) for history in conversation_histories.values())
+            
+            # Get recent activity
+            cursor.execute("""
+                SELECT COUNT(*) as login_count
+                FROM audit_log 
+                WHERE action = 'login' AND timestamp > NOW() - INTERVAL '24 hours'
+            """)
+            recent_logins = cursor.fetchone()[0]
+            
+            cursor.execute("""
+                SELECT COUNT(*) as query_count
+                FROM audit_log 
+                WHERE action = 'query_execution' AND timestamp > NOW() - INTERVAL '24 hours'
+            """)
+            recent_queries = cursor.fetchone()[0]
+            
+            # Get facial auth statistics if available
+            facial_stats = {}
+            if FACIAL_AUTH_AVAILABLE:
+                try:
+                    facial_status = facial_auth.get_system_status()
+                    facial_stats = {
+                        'total_facial_users': facial_status.get('total_users', 0),
+                        'facial_admin_users': facial_status.get('admin_users', 0),
+                        'facial_regular_users': facial_status.get('regular_users', 0),
+                        'total_face_samples': facial_status.get('total_face_samples', 0),
+                        'average_samples_per_user': facial_status.get('average_samples_per_user', 0)
+                    }
+                except Exception as e:
+                    logger.error(f"Error getting facial stats: {e}")
+                    facial_stats = {'error': 'Failed to get facial auth statistics'}
+            
+            return jsonify({
+                'success': True,
+                'statistics': {
+                    'users': user_stats,
+                    'conversations': {
+                        'total_conversation_sessions': total_conversations,
+                        'active_conversations': active_conversations,
+                        'total_messages': total_messages
+                    },
+                    'recent_activity': {
+                        'logins_24h': recent_logins,
+                        'queries_24h': recent_queries
+                    },
+                    'facial_authentication': facial_stats,
+                    'system_status': {
+                        'database_available': DB_AVAILABLE,
+                        'ai_available': AI_AVAILABLE,
+                        'facial_auth_available': FACIAL_AUTH_AVAILABLE
+                    }
+                }
+            })
+            
+    except Exception as e:
+        logger.error(f"Error getting system stats: {e}")
+        return jsonify({
+            'success': False,
+            'message': 'Failed to get system statistics'
+        }), 500
+
+# CONVERSATION MEMORY ENDPOINTS
+@app.route('/conversation/history', methods=['GET'])
+@require_auth
+def get_conversation_history(user):
+    """Get conversation history for current user"""
+    try:
+        history = get_user_conversation_history(user['user_id'])
+        
+        return jsonify({
+            'success': True,
+            'conversation_history': history,
+            'message_count': len(history)
+        })
+        
+    except Exception as e:
+        logger.error(f"Error getting conversation history: {e}")
+        return jsonify({
+            'success': False,
+            'message': 'Failed to get conversation history'
+        }), 500
+
+@app.route('/conversation/clear', methods=['POST'])
+@require_auth
+def clear_conversation_history(user):
+    """Clear conversation history for current user"""
+    try:
+        user_id_str = str(user['user_id'])
+        if user_id_str in conversation_histories:
+            conversation_histories[user_id_str] = []
+        
+        return jsonify({
+            'success': True,
+            'message': 'Conversation history cleared successfully'
+        })
+        
+    except Exception as e:
+        logger.error(f"Error clearing conversation history: {e}")
+        return jsonify({
+            'success': False,
+            'message': 'Failed to clear conversation history'
         }), 500
 
 # SYSTEM STATUS
@@ -753,36 +1123,43 @@ def get_system_status(user):
         with db_assistant.get_db_connection() as conn:
             cursor = conn.cursor()
             
-            # Get basic stats
-            cursor.execute("SELECT COUNT(*) FROM customers")
-            customers_count = cursor.fetchone()[0]
+            # Get basic stats based on user role
+            stats = {}
             
-            cursor.execute("SELECT COUNT(*) FROM products")
-            products_count = cursor.fetchone()[0]
+            if user['role'] in ['viewer', 'manager', 'admin']:
+                cursor.execute("SELECT COUNT(*) FROM customers")
+                stats['customers_count'] = cursor.fetchone()[0]
+                
+                cursor.execute("SELECT COUNT(*) FROM products")
+                stats['products_count'] = cursor.fetchone()[0]
             
-            cursor.execute("SELECT COUNT(*) FROM invoices")
-            invoices_count = cursor.fetchone()[0]
+            if user['role'] in ['visitor', 'viewer', 'manager', 'admin']:
+                cursor.execute("SELECT COUNT(*) FROM invoices")
+                stats['invoices_count'] = cursor.fetchone()[0]
             
-            cursor.execute("SELECT COUNT(*) FROM receipt_captures WHERE status = 'pending_review'")
-            pending_receipts = cursor.fetchone()[0]
+            if user['role'] in ['manager', 'admin']:
+                cursor.execute("SELECT COUNT(*) FROM receipt_captures WHERE status = 'pending_review'")
+                stats['pending_receipts'] = cursor.fetchone()[0]
             
-            # Get facial auth stats if available
+            # Get user's conversation info
+            user_history = get_user_conversation_history(user['user_id'])
+            stats['conversation_messages'] = len(user_history)
+            
+            # Get facial auth stats if available and user is admin
             facial_auth_stats = {}
-            if FACIAL_AUTH_AVAILABLE:
+            if FACIAL_AUTH_AVAILABLE and user['role'] == 'admin':
                 try:
                     facial_status = facial_auth.get_system_status()
                     facial_auth_stats = {
                         'total_facial_users': facial_status.get('total_users', 0),
                         'facial_admin_users': facial_status.get('admin_users', 0),
                         'facial_regular_users': facial_status.get('regular_users', 0),
-                        'facial_auth_status': facial_status.get('status', 'unknown')
+                        'facial_auth_status': facial_status.get('status', 'unknown'),
+                        'enhanced_features': facial_status.get('enhanced_tolerance', False)
                     }
                 except Exception as e:
                     logger.error(f"Error getting facial auth stats: {e}")
                     facial_auth_stats = {
-                        'total_facial_users': 0,
-                        'facial_admin_users': 0,
-                        'facial_regular_users': 0,
                         'facial_auth_status': 'error'
                     }
             
@@ -791,14 +1168,25 @@ def get_system_status(user):
                 'ai_available': AI_AVAILABLE,
                 'facial_auth_available': FACIAL_AUTH_AVAILABLE,
                 'user_role': user['role'],
-                'statistics': {
-                    'customers': customers_count,
-                    'products': products_count,
-                    'invoices': invoices_count,
-                    'pending_receipts': pending_receipts,
-                    **facial_auth_stats
+                'user_permissions': {
+                    'can_view_customers': user['role'] in ['viewer', 'manager', 'admin'],
+                    'can_view_products': user['role'] in ['viewer', 'manager', 'admin'],
+                    'can_view_invoices': user['role'] in ['visitor', 'viewer', 'manager', 'admin'],
+                    'can_process_receipts': user['role'] in ['manager', 'admin'],
+                    'can_manage_users': user['role'] == 'admin'
+                },
+                'statistics': stats,
+                'features': {
+                    'conversation_memory': True,
+                    'enhanced_facial_recognition': FACIAL_AUTH_AVAILABLE,
+                    'role_based_permissions': True,
+                    'chart_generation': True,
+                    'audit_logging': True
                 }
             }
+            
+            if facial_auth_stats:
+                status['facial_authentication'] = facial_auth_stats
             
             return jsonify({
                 'success': True,
@@ -812,31 +1200,115 @@ def get_system_status(user):
             'message': f'Failed to get system status: {str(e)}'
         }), 500
 
-# ERROR HANDLERS
-@app.errorhandler(404)
-def not_found(error):
-    return jsonify({
-        'success': False,
-        'message': 'Endpoint not found'
-    }), 404
-
-@app.errorhandler(500)
-def internal_error(error):
-    return jsonify({
-        'success': False,
-        'message': 'Internal server error'
-    }), 500
-
-# Add this endpoint to your existing app.py file (after other endpoints)
-
-@app.route('/facial-auth/register', methods=['POST'])
+# ENHANCED QUERY ENDPOINT WITH BETTER ERROR HANDLING
+@app.route('/query/enhanced', methods=['POST'])
 @require_auth
-def facial_register(user):
-    """Register user's face for facial authentication"""
-    if not FACIAL_AUTH_AVAILABLE:
+def handle_enhanced_query(user):
+    """Enhanced query handler with better conversation memory and error handling"""
+    try:
+        data = request.get_json()
+        
+        if not data:
+            return jsonify({
+                'success': False,
+                'message': 'No data provided'
+            }), 400
+        
+        if 'query' not in data:
+            return jsonify({
+                'success': False,
+                'message': 'No query provided'
+            }), 400
+
+        user_query = data['query'].strip()
+        
+        if not user_query:
+            return jsonify({
+                'success': False,
+                'message': 'Query cannot be empty'
+            }), 400
+
+        # Check query length
+        if len(user_query) > 1000:
+            return jsonify({
+                'success': False,
+                'message': 'Query too long. Please limit to 1000 characters.'
+            }), 400
+
+        logger.info(f"Processing enhanced query from {user['username']} ({user['role']}): {user_query}")
+        
+        # Get conversation history for this user
+        conversation_history = get_user_conversation_history(user['user_id'])
+        
+        # Add user's query to conversation history
+        add_to_conversation_history(user['user_id'], 'user', user_query)
+        
+        # Execute query with enhanced error handling
+        try:
+            response_data = db_assistant.execute_query_with_permissions(
+                user_query, 
+                user, 
+                conversation_history=conversation_history
+            )
+            
+            # Add AI response to conversation history
+            if response_data.get('success') and response_data.get('message'):
+                add_to_conversation_history(user['user_id'], 'assistant', response_data['message'])
+            
+        except Exception as db_error:
+            logger.error(f"Database query error: {db_error}")
+            
+            # Add error to conversation history
+            error_message = f"I encountered an error processing your query: {str(db_error)}"
+            add_to_conversation_history(user['user_id'], 'assistant', error_message)
+            
+            return jsonify({
+                'success': False,
+                'message': error_message,
+                'error_type': 'database_error',
+                'authenticated_user': user['username'],
+                'user_role': user['role']
+            }), 500
+        
+        # Add enhanced context to response
+        response_data['authenticated_user'] = user['username']
+        response_data['user_role'] = user['role']
+        response_data['conversation_context'] = len(conversation_history) > 0
+        response_data['conversation_length'] = len(conversation_history)
+        response_data['enhanced_query_processing'] = True
+        
+        # Debug log for chart issues
+        if response_data.get('chart'):
+            logger.info(f"Chart generated successfully for enhanced query: {user_query}")
+        elif 'chart' in user_query.lower():
+            logger.warning(f"Chart requested but not generated for enhanced query: {user_query}")
+        
+        return jsonify(response_data)
+        
+    except Exception as e:
+        logger.error(f"Error processing enhanced query: {e}")
+        logger.error(f"Full traceback: {traceback.format_exc()}")
+        
+        # Add error to conversation history
+        if 'user' in locals():
+            error_message = f"System error occurred while processing your query"
+            add_to_conversation_history(user['user_id'], 'assistant', error_message)
+        
         return jsonify({
             'success': False,
-            'message': 'Facial authentication not available'
+            'message': f'Enhanced query processing failed: {str(e)}',
+            'error_type': 'system_error'
+        }), 500
+
+# RECEIPT PROCESSING ENDPOINTS (Enhanced for managers/admins)
+@app.route('/receipt/upload', methods=['POST'])
+@require_role(['manager', 'admin'])
+def upload_receipt(user):
+    """Upload and process receipt image (manager/admin only)"""
+    if not DB_AVAILABLE:
+        return jsonify({
+            'success': False,
+            'message': 'Database not available for receipt processing'
         }), 500
     
     try:
@@ -845,7 +1317,7 @@ def facial_register(user):
         if not data or 'image' not in data:
             return jsonify({
                 'success': False,
-                'message': 'Image data required'
+                'message': 'Receipt image data required'
             }), 400
         
         image_base64 = data['image']
@@ -854,69 +1326,146 @@ def facial_register(user):
         if image_base64.startswith('data:'):
             image_base64 = image_base64.split(',')[1]
         
-        # Register face for authenticated user
-        # Map user role to facial auth permission level
-        permission_map = {
-            'visitor': 'read_only',
-            'viewer': 'read_only', 
-            'manager': 'read_only',
-            'admin': 'admin'
-        }
-        
-        permission_level = permission_map.get(user['role'], 'read_only')
-        
-        # Create/update facial auth user
-        result = facial_auth.create_regular_user(
-            user['full_name'] or user['username'], 
-            image_base64, 
-            permission_level
-        )
+        # Process receipt with database assistant
+        result = db_assistant.process_receipt_image(user['user_id'], image_base64)
         
         if result['success']:
-            # Update user record to indicate face recognition is enabled
-            try:
-                with db_assistant.get_db_connection() as conn:
-                    cursor = conn.cursor()
-                    cursor.execute("""
-                        UPDATE users 
-                        SET face_recognition_enabled = true 
-                        WHERE user_id = %s
-                    """, (user['user_id'],))
-                    conn.commit()
-            except Exception as e:
-                logger.warning(f"Failed to update user face recognition flag: {e}")
+            logger.info(f"Receipt uploaded successfully by {user['username']}")
+        else:
+            logger.warning(f"Receipt upload failed for {user['username']}: {result.get('message')}")
+        
+        return jsonify(result)
+        
+    except Exception as e:
+        logger.error(f"Receipt upload error: {e}")
+        return jsonify({
+            'success': False,
+            'message': f'Receipt upload failed: {str(e)}'
+        }), 500
+
+@app.route('/receipt/pending', methods=['GET'])
+@require_role(['manager', 'admin'])
+def get_pending_receipts(user):
+    """Get pending receipts for review (manager/admin only)"""
+    try:
+        with db_assistant.get_db_connection() as conn:
+            cursor = conn.cursor()
             
-            # Log successful face registration
-            if hasattr(facial_auth, 'log_access'):
-                try:
-                    facial_auth.log_access(
-                        user['user_id'],
-                        user['username'],
-                        'face_registration',
-                        'Face registration successful',
-                        request.environ.get('HTTP_X_FORWARDED_FOR', request.remote_addr),
-                        True
-                    )
-                except Exception as e:
-                    logger.warning(f"Failed to log face registration: {e}")
+            cursor.execute("""
+                SELECT capture_id, extracted_vendor, extracted_date, extracted_total, 
+                       confidence_score, captured_at, u.username as uploaded_by
+                FROM receipt_captures rc
+                LEFT JOIN users u ON rc.user_id = u.user_id
+                WHERE status = 'pending_review'
+                ORDER BY captured_at DESC
+                LIMIT 50
+            """)
             
-            logger.info(f"Face registration successful for user: {user['username']}")
+            receipts = []
+            for row in cursor.fetchall():
+                receipts.append({
+                    'capture_id': row[0],
+                    'vendor': row[1],
+                    'date': row[2].isoformat() if row[2] else None,
+                    'total': float(row[3]) if row[3] else 0.0,
+                    'confidence': float(row[4]) if row[4] else 0.0,
+                    'uploaded_at': row[5].isoformat() if row[5] else None,
+                    'uploaded_by': row[6] or 'Unknown'
+                })
             
             return jsonify({
                 'success': True,
-                'message': 'Face registration completed successfully! You can now login with face recognition.',
-                'user_id': result.get('user_id')
+                'pending_receipts': receipts,
+                'count': len(receipts)
             })
-        else:
-            logger.warning(f"Face registration failed for user {user['username']}: {result.get('message')}")
-            return jsonify(result), 400
             
     except Exception as e:
-        logger.error(f"Face registration error: {e}")
+        logger.error(f"Error getting pending receipts: {e}")
         return jsonify({
             'success': False,
-            'message': f'Face registration failed: {str(e)}'
+            'message': 'Failed to get pending receipts'
         }), 500
+
+# ERROR HANDLERS
+@app.errorhandler(404)
+def not_found(error):
+    return jsonify({
+        'success': False,
+        'message': 'Endpoint not found',
+        'available_endpoints': [
+            '/login', '/logout', '/query', '/query/enhanced',
+            '/facial-auth/authenticate', '/facial-auth/register',
+            '/admin/users', '/admin/create-user', '/system-status'
+        ]
+    }), 404
+
+@app.errorhandler(405)
+def method_not_allowed(error):
+    return jsonify({
+        'success': False,
+        'message': 'Method not allowed for this endpoint'
+    }), 405
+
+@app.errorhandler(500)
+def internal_error(error):
+    logger.error(f"Internal server error: {error}")
+    return jsonify({
+        'success': False,
+        'message': 'Internal server error occurred'
+    }), 500
+
+# HEALTH AND MONITORING
+@app.route('/health/detailed', methods=['GET'])
+def detailed_health_check():
+    """Detailed health check with component status"""
+    health_status = {
+        'status': 'healthy',
+        'timestamp': datetime.now().isoformat(),
+        'version': '4.0',
+        'components': {
+            'database': {
+                'available': DB_AVAILABLE,
+                'status': 'operational' if DB_AVAILABLE else 'unavailable'
+            },
+            'ai_service': {
+                'available': AI_AVAILABLE,
+                'status': 'operational' if AI_AVAILABLE else 'unavailable'
+            },
+            'facial_auth': {
+                'available': FACIAL_AUTH_AVAILABLE,
+                'status': 'operational' if FACIAL_AUTH_AVAILABLE else 'unavailable'
+            },
+            'conversation_memory': {
+                'available': True,
+                'active_sessions': len(conversation_histories),
+                'total_messages': sum(len(history) for history in conversation_histories.values())
+            }
+        },
+        'features': {
+            'enhanced_facial_recognition': FACIAL_AUTH_AVAILABLE,
+            'conversation_memory_system': True,
+            'role_based_authentication': True,
+            'admin_user_management': True,
+            'purple_teal_theme_support': True,
+            'chart_generation': AI_AVAILABLE and DB_AVAILABLE,
+            'receipt_processing': DB_AVAILABLE
+        }
+    }
+    
+    # Determine overall health
+    critical_components = [DB_AVAILABLE, AI_AVAILABLE]
+    if not all(critical_components):
+        health_status['status'] = 'degraded'
+    
+    return jsonify(health_status)
+
+@app.route('/health/quick', methods=['GET'])
+def quick_health_check():
+    """Quick health check for load balancers"""
+    return jsonify({
+        'status': 'ok',
+        'timestamp': datetime.now().isoformat()
+    })
 
 if __name__ == '__main__':
     # Set session lifetime
@@ -933,5 +1482,13 @@ if __name__ == '__main__':
         print(f"Failed to parse port '{port_env}', using default 5000")
         port = 5000
     
-    print(f"Starting Flask app on 0.0.0.0:{port}")
+    print(f"=== STARTING NEURAL PULSE SERVER ===")
+    print(f"Host: 0.0.0.0")
+    print(f"Port: {port}")
+    print(f"Database Available: {DB_AVAILABLE}")
+    print(f"AI Available: {AI_AVAILABLE}")
+    print(f"Facial Auth Available: {FACIAL_AUTH_AVAILABLE}")
+    print(f"Features: Enhanced conversation memory, Purple-teal theme, Role-based auth")
+    print(f"=====================================")
+    
     app.run(host='0.0.0.0', port=port, debug=False)

@@ -506,14 +506,14 @@ class DatabaseAssistant:
             logger.error(f"Receipt approval error: {e}")
             return {'success': False, 'message': f'Receipt approval failed: {str(e)}'}
 
-    # ENHANCED QUERY PROCESSING WITH PERMISSIONS
-    def execute_query_with_permissions(self, user_input: str, user_data: Dict) -> Dict[str, Any]:
-        """Execute query with user permission checking"""
+    # ENHANCED QUERY PROCESSING WITH PERMISSIONS AND CONVERSATION MEMORY
+    def execute_query_with_permissions(self, user_input: str, user_data: Dict, conversation_history: List[Dict] = None) -> Dict[str, Any]:
+        """Execute query with user permission checking and conversation memory"""
         user_id = user_data['user_id']
         role = user_data['role']
         
-        # Process with improved Gemini AI
-        gemini_response = self.process_with_gemini_for_role(user_input, role)
+        # Process with improved Gemini AI including conversation context
+        gemini_response = self.process_with_gemini_for_role(user_input, role, conversation_history)
         
         # Initialize response
         response_data = {
@@ -623,27 +623,43 @@ class DatabaseAssistant:
             })
             return response_data
 
-    def process_with_gemini_for_role(self, user_input: str, role: str) -> Dict[str, Any]:
-        """Process user input with Gemini AI for intelligent responses - FIXED VERSION"""
+    def process_with_gemini_for_role(self, user_input: str, role: str, conversation_history: List[Dict] = None) -> Dict[str, Any]:
+        """Process user input with Gemini AI including conversation memory - ENHANCED VERSION"""
         try:
             schema = self.get_database_schema_for_role(role)
             
+            # Build conversation context
+            context_prompt = ""
+            if conversation_history and len(conversation_history) > 0:
+                context_prompt = "\n\nCONVERSATION HISTORY:\n"
+                # Include last 5 exchanges for context
+                recent_history = conversation_history[-10:] if len(conversation_history) > 10 else conversation_history
+                for msg in recent_history:
+                    sender = msg.get('sender', 'Unknown')
+                    content = msg.get('content', '')
+                    context_prompt += f"{sender}: {content}\n"
+                context_prompt += "\nUse this conversation history to provide better, more contextual responses. Remember what was discussed before.\n"
+            
             prompt = f"""
-You are a professional, intelligent database assistant that provides accurate and natural responses.
+You are a professional, intelligent database assistant with conversation memory that provides accurate and natural responses.
 
 DATABASE SCHEMA:
 {schema}
 
-USER QUESTION: "{user_input}"
+{context_prompt}
+
+CURRENT USER QUESTION: "{user_input}"
 USER ROLE: {role}
 
 CRITICAL INSTRUCTIONS:
-1. For count/number queries, generate SQL that returns a single COUNT(*) value
-2. For year-specific queries (2023, 2024, 2025), use EXTRACT(YEAR FROM invoice_date) = YEAR
-3. For "invoices per year" queries, GROUP BY the year to show breakdown by year
-4. For chart requests, ensure the SQL returns proper columns for visualization
-5. Be precise with SQL - use exact PostgreSQL syntax
-6. Provide natural, conversational responses that match the data being returned
+1. Consider the conversation history when generating responses - reference previous queries and build on past context
+2. For count/number queries, generate SQL that returns a single COUNT(*) value
+3. For year-specific queries (2023, 2024, 2025), use EXTRACT(YEAR FROM invoice_date) = YEAR
+4. For "invoices per year" queries, GROUP BY the year to show breakdown by year
+5. For chart requests, ensure the SQL returns proper columns for visualization
+6. Be precise with SQL - use exact PostgreSQL syntax
+7. Provide natural, conversational responses that reference previous discussions when relevant
+8. If the user asks follow-up questions, understand they're building on previous queries
 
 ROLE PERMISSIONS:
 - Visitor: Only sales/invoices data
@@ -655,13 +671,13 @@ RESPONSE FORMAT (JSON):
 {{
     "needs_sql": true/false,
     "sql_query": "SELECT statement" (if needs_sql is true),
-    "response_message": "Natural response with [COUNT] for single values",
+    "response_message": "Natural response with [COUNT] for single values, reference conversation context",
     "suggested_chart": "none/bar/pie"
 }}
 
-EXAMPLES:
+EXAMPLES WITH CONTEXT:
 
-For "how many invoices do we have in 2024":
+For "how many invoices do we have in 2024" (first time):
 {{
     "needs_sql": true,
     "sql_query": "SELECT COUNT(*) FROM invoices WHERE EXTRACT(YEAR FROM invoice_date) = 2024",
@@ -669,19 +685,19 @@ For "how many invoices do we have in 2024":
     "suggested_chart": "none"
 }}
 
-For "how many invoices per year":
+For "what about 2023?" (follow-up after asking about 2024):
+{{
+    "needs_sql": true,
+    "sql_query": "SELECT COUNT(*) FROM invoices WHERE EXTRACT(YEAR FROM invoice_date) = 2023",
+    "response_message": "For 2023, we had [COUNT] invoices. That's a comparison to the [COUNT] from 2024 we just discussed.",
+    "suggested_chart": "none"
+}}
+
+For "show me a chart of that" (after discussing yearly data):
 {{
     "needs_sql": true,
     "sql_query": "SELECT EXTRACT(YEAR FROM invoice_date) as year, COUNT(*) as invoice_count FROM invoices GROUP BY EXTRACT(YEAR FROM invoice_date) ORDER BY year",
-    "response_message": "Here's the breakdown of invoices by year:",
-    "suggested_chart": "bar"
-}}
-
-For "make me a bar chart for sales by month":
-{{
-    "needs_sql": true,
-    "sql_query": "SELECT EXTRACT(MONTH FROM invoice_date) as month, SUM(total_amount) as total_sales FROM invoices WHERE EXTRACT(YEAR FROM invoice_date) = EXTRACT(YEAR FROM CURRENT_DATE) GROUP BY EXTRACT(MONTH FROM invoice_date) ORDER BY month",
-    "response_message": "Here's your monthly sales chart for this year:",
+    "response_message": "Here's the chart showing invoice counts by year that we've been discussing:",
     "suggested_chart": "bar"
 }}
 
@@ -717,25 +733,70 @@ Generate your response in valid JSON format:
                 if gemini_response['needs_sql'] and 'sql_query' not in gemini_response:
                     gemini_response['sql_query'] = ""
                     
-                logger.info(f"Gemini AI processed query successfully: {user_input}")
+                logger.info(f"Gemini AI processed query with context successfully: {user_input}")
                 return gemini_response
                 
             except json.JSONDecodeError as e:
                 logger.error(f"Failed to parse Gemini response as JSON: {e}")
                 logger.error(f"Raw response: {response_text}")
                 
-                # Enhanced fallback with specific pattern matching
-                return self._get_fallback_response(user_input, role)
+                # Enhanced fallback with conversation context
+                return self._get_fallback_response_with_context(user_input, role, conversation_history)
                 
         except Exception as e:
             logger.error(f"Gemini AI processing failed: {e}")
-            return self._get_fallback_response(user_input, role)
+            return self._get_fallback_response_with_context(user_input, role, conversation_history)
 
-    def _get_fallback_response(self, user_input: str, role: str) -> Dict[str, Any]:
-        """Enhanced fallback with better pattern matching"""
+    def _get_fallback_response_with_context(self, user_input: str, role: str, conversation_history: List[Dict] = None) -> Dict[str, Any]:
+        """Enhanced fallback with conversation context awareness"""
         user_lower = user_input.lower()
         
-        # Count queries for specific years
+        # Check if this is a follow-up question
+        is_followup = any(word in user_lower for word in ['what about', 'and', 'also', 'too', 'that', 'this', 'same'])
+        
+        # Extract context from conversation history
+        last_topic = None
+        if conversation_history and len(conversation_history) > 0:
+            # Look for recent topics
+            for msg in reversed(conversation_history[-6:]):
+                content = msg.get('content', '').lower()
+                if 'invoice' in content:
+                    last_topic = 'invoices'
+                elif 'customer' in content:
+                    last_topic = 'customers'
+                elif 'product' in content:
+                    last_topic = 'products'
+                elif 'sales' in content:
+                    last_topic = 'sales'
+                if last_topic:
+                    break
+        
+        # Handle follow-up questions with context
+        if is_followup and last_topic:
+            if '2024' in user_lower and last_topic == 'invoices':
+                return {
+                    "needs_sql": True,
+                    "sql_query": "SELECT COUNT(*) FROM invoices WHERE EXTRACT(YEAR FROM invoice_date) = 2024",
+                    "response_message": "For 2024, we have [COUNT] invoices.",
+                    "suggested_chart": "none"
+                }
+            elif '2023' in user_lower and last_topic == 'invoices':
+                return {
+                    "needs_sql": True,
+                    "sql_query": "SELECT COUNT(*) FROM invoices WHERE EXTRACT(YEAR FROM invoice_date) = 2023",
+                    "response_message": "For 2023, we had [COUNT] invoices.",
+                    "suggested_chart": "none"
+                }
+            elif 'chart' in user_lower and last_topic:
+                if last_topic == 'invoices':
+                    return {
+                        "needs_sql": True,
+                        "sql_query": "SELECT EXTRACT(YEAR FROM invoice_date) as year, COUNT(*) as invoice_count FROM invoices GROUP BY EXTRACT(YEAR FROM invoice_date) ORDER BY year",
+                        "response_message": "Here's the chart showing the invoice data we've been discussing:",
+                        "suggested_chart": "bar"
+                    }
+        
+        # Regular fallback patterns (existing logic)
         if 'invoice' in user_lower and any(word in user_lower for word in ['how many', 'count', 'number']):
             if '2024' in user_lower:
                 return {
@@ -749,13 +810,6 @@ Generate your response in valid JSON format:
                     "needs_sql": True,
                     "sql_query": "SELECT COUNT(*) FROM invoices WHERE EXTRACT(YEAR FROM invoice_date) = 2023",
                     "response_message": "We have [COUNT] invoices from 2023.",
-                    "suggested_chart": "none"
-                }
-            elif '2025' in user_lower:
-                return {
-                    "needs_sql": True,
-                    "sql_query": "SELECT COUNT(*) FROM invoices WHERE EXTRACT(YEAR FROM invoice_date) = 2025",
-                    "response_message": "We have [COUNT] invoices from 2025.",
                     "suggested_chart": "none"
                 }
             elif 'per year' in user_lower or 'by year' in user_lower:
@@ -818,7 +872,7 @@ Generate your response in valid JSON format:
         elif any(word in user_lower for word in ['hello', 'hi', 'hey']):
             return {
                 "needs_sql": False,
-                "response_message": f"Hello! I'm your AI Database Assistant. I can help you analyze customers, sales, products, and more. What would you like to explore?",
+                "response_message": f"Hello! I'm your AI Database Assistant with conversation memory. I remember our previous discussions and can help you analyze customers, sales, products, and more. What would you like to explore?",
                 "suggested_chart": "none"
             }
         
@@ -826,7 +880,7 @@ Generate your response in valid JSON format:
         else:
             return {
                 "needs_sql": False,
-                "response_message": "I'm here to help you explore your business data! You can ask me about customer counts, product information, sales data, invoices, and I can even create charts. Try asking something like 'How many customers do we have?' or 'Show me sales by month'.",
+                "response_message": "I'm here to help you explore your business data with full conversation memory! You can ask me about customer counts, product information, sales data, invoices, and I can even create charts. I'll remember our discussion context. Try asking something like 'How many customers do we have?' or 'Show me sales by month'.",
                 "suggested_chart": "none"
             }
 
@@ -962,15 +1016,19 @@ Generate your response in valid JSON format:
 # Global instance
 db_assistant_instance = None
 
-def get_authenticated_db_response(user_input: str, user_data: Dict) -> Dict[str, Any]:
-    """API function with user authentication"""
+def get_authenticated_db_response(user_input: str, user_data: Dict, conversation_history: List[Dict] = None) -> Dict[str, Any]:
+    """API function with user authentication and conversation memory"""
     global db_assistant_instance
     
     try:
         if db_assistant_instance is None:
             db_assistant_instance = DatabaseAssistant()
         
-        return db_assistant_instance.execute_query_with_permissions(user_input, user_data)
+        return db_assistant_instance.execute_query_with_permissions(
+            user_input, 
+            user_data, 
+            conversation_history=conversation_history
+        )
         
     except Exception as e:
         logger.error(f"API error: {e}")
