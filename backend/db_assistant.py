@@ -231,9 +231,6 @@ class DatabaseAssistant:
                 
         except Exception as e:
             logger.error(f"Error logging activity: {e}")
-                
-        except Exception as e:
-            logger.error(f"Error logging activity: {e}")
 
     # ROLE-BASED QUERY PROCESSING
     def get_database_schema_for_role(self, role: str) -> str:
@@ -660,17 +657,11 @@ Examples of good responses:
 - For "how many customers": {{"needs_sql": true, "sql_query": "SELECT COUNT(*) FROM customers", "response_message": "We currently have [COUNT] customers in our database.", "suggested_chart": "none"}}
 - For "كم عدد العملاء": {{"needs_sql": true, "sql_query": "SELECT COUNT(*) FROM customers", "response_message": "لدينا حاليًا [COUNT] عميل في قاعدة البيانات.", "suggested_chart": "none"}}
 - For "اعرض المنتجات": {{"needs_sql": true, "sql_query": "SELECT name, category, price, stock FROM products LIMIT 10", "response_message": "إليك منتجاتنا:", "suggested_chart": "none"}}
+- For "show sales by month": Include appropriate GROUP BY and chart suggestion
+- For general questions: {{"needs_sql": false, "response_message": "Helpful response", "suggested_chart": "none"}}
 
 Generate the JSON response:
 """
-
-    Examples of good responses:
-    - For "how many customers": {{"needs_sql": true, "sql_query": "SELECT COUNT(*) FROM customers", "response_message": "We currently have [COUNT] customers in our database.", "suggested_chart": "none"}}
-    - For "show sales by month": Include appropriate GROUP BY and chart suggestion
-    - For general questions: {{"needs_sql": false, "response_message": "Helpful response", "suggested_chart": "none"}}
-
-    Generate the JSON response:
-    """
 
             # Call Gemini AI
             response = self.model.generate_content(prompt)
@@ -777,6 +768,7 @@ Generate the JSON response:
                     "response_message": "I'm your AI database assistant. I can help you with customer counts, product information, sales data, invoices, and receipts. Try asking questions like 'How many customers do we have?' or 'Show me our products'.",
                     "suggested_chart": "none"
                 }
+
     # EXISTING METHODS (updated for compatibility)
     def execute_query(self, sql_query: str) -> Tuple[Optional[pd.DataFrame], bool, str]:
         """Execute SQL query and return results"""
@@ -844,6 +836,7 @@ Generate the JSON response:
             logger.info("Database assistant cleaned up successfully")
         except Exception as e:
             logger.error(f"Cleanup error: {e}")
+
 
 # Global instance
 db_assistant_instance = None
