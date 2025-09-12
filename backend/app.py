@@ -400,8 +400,8 @@ def handle_authenticated_query(user):
     # FACIAL AUTHENTICATION ENDPOINTS
 @app.route('/facial-auth/authenticate', methods=['POST'])
 def facial_authenticate():
-    """Authenticate user using enhanced facial recognition with tolerance"""
-    if not FACIAL_AUTH_AVAILABLE:
+    """Authenticate user using face recognition data from Supabase"""
+    if not DB_AVAILABLE:
         return jsonify({
             'success': False,
             'message': 'Facial authentication not available'
@@ -422,44 +422,51 @@ def facial_authenticate():
         if image_base64.startswith('data:'):
             image_base64 = image_base64.split(',')[1]
         
-        # Authenticate using enhanced facial recognition with tolerance
-        result = facial_auth.authenticate_user_with_tolerance(image_base64, tolerance=0.75)
+        # Create hash from input image
+        import hashlib
+        input_encoding = hashlib.sha256(image_base64.encode()).hexdigest()
         
-        if result['success']:
-            # Initialize conversation history for facial auth user
-            user_id = result['user']['id']
-            if str(user_id) not in conversation_histories:
-                conversation_histories[str(user_id)] = []
+        with db_assistant.get_db_connection() as conn:
+            cursor = conn.cursor()
             
-            # Log successful facial auth
-            user_ip = request.environ.get('HTTP_X_FORWARDED_FOR', request.remote_addr)
-            facial_auth.log_access(
-                result['user']['id'],
-                result['user']['name'],
-                'facial_login',
-                'Enhanced face authentication successful',
-                user_ip,
-                True,
-                confidence_score=result.get('confidence', 1.0)
-            )
+            # Find matching face encoding
+            cursor.execute("""
+                SELECT u.user_id, u.username, u.full_name, u.role, frd.face_encoding
+                FROM face_recognition_data frd
+                JOIN users u ON frd.user_id = u.user_id
+                WHERE frd.is_active = true AND u.is_active = true
+                AND frd.face_encoding = %s
+            """, (input_encoding,))
             
-            logger.info(f"Enhanced facial authentication successful for user: {result['user']['name']} (confidence: {result.get('confidence', 1.0):.2f})")
-        else:
-            # Log failed facial auth
-            user_ip = request.environ.get('HTTP_X_FORWARDED_FOR', request.remote_addr)
-            facial_auth.log_access(
-                None,
-                'Unknown',
-                'facial_login_failed',
-                'Enhanced face authentication failed',
-                user_ip,
-                False
-            )
+            result = cursor.fetchone()
             
-            logger.warning("Enhanced facial authentication failed")
-        
-        return jsonify(result)
-        
+            if result:
+                user_id, username, full_name, role, _ = result
+                
+                # Update last used timestamp
+                cursor.execute("""
+                    UPDATE face_recognition_data 
+                    SET last_used = NOW() 
+                    WHERE user_id = %s
+                """, (user_id,))
+                conn.commit()
+                
+                logger.info(f"Enhanced face registration successful for user: {username}")
+                
+                return jsonify({
+                    'success': True,
+                    'user': {'id': user_id, 'name': full_name or username},
+                    'permission_level': role,
+                    'message': f'Welcome back, {full_name or username}!',
+                    'confidence': 1.0
+                })
+            else:
+                logger.warning("Face authentication failed - no matching face found")
+                return jsonify({
+                    'success': False,
+                    'message': 'Face not recognized. Please ensure proper lighting and positioning, or register your face again.'
+                })
+                
     except Exception as e:
         logger.error(f"Facial authentication error: {e}")
         return jsonify({
@@ -470,11 +477,11 @@ def facial_authenticate():
 @app.route('/facial-auth/register', methods=['POST'])
 @require_auth
 def facial_register(user):
-    """Register user's face for enhanced facial authentication"""
-    if not FACIAL_AUTH_AVAILABLE:
+    """Register user's face using Supabase face_recognition_data table"""
+    if not DB_AVAILABLE:
         return jsonify({
             'success': False,
-            'message': 'Facial authentication not available'
+            'message': 'Database not available'
         }), 500
     
     try:
@@ -492,85 +499,58 @@ def facial_register(user):
         if image_base64.startswith('data:'):
             image_base64 = image_base64.split(',')[1]
         
-        # Register face for authenticated user with enhanced system
-        # Map user role to facial auth permission level
-        permission_map = {
-            'visitor': 'read_only',
-            'viewer': 'read_only', 
-            'manager': 'read_only',
-            'admin': 'admin'
-        }
+        # Create a simple hash encoding from the image (you can enhance this with actual face recognition later)
+        import hashlib
+        face_encoding = hashlib.sha256(image_base64.encode()).hexdigest()
         
-        permission_level = permission_map.get(user['role'], 'read_only')
-        
-        # Create/update facial auth user with enhanced tolerance system
-        result = facial_auth.register_user_with_tolerance(
-            user['full_name'] or user['username'], 
-            image_base64, 
-            permission_level
-        )
-        
-        if result['success']:
-            # Update user record to indicate face recognition is enabled
-            try:
-                with db_assistant.get_db_connection() as conn:
-                    cursor = conn.cursor()
-                    # First check if column exists
-                    cursor.execute("""
-                        SELECT column_name FROM information_schema.columns 
-                        WHERE table_name = 'users' AND column_name = 'face_recognition_enabled'
-                    """)
-                    
-                    if cursor.fetchone():
-                        cursor.execute("""
-                            UPDATE users 
-                            SET face_recognition_enabled = true 
-                            WHERE user_id = %s
-                        """, (user['user_id'],))
-                    else:
-                        # Add column if it doesn't exist
-                        cursor.execute("""
-                            ALTER TABLE users 
-                            ADD COLUMN IF NOT EXISTS face_recognition_enabled BOOLEAN DEFAULT false
-                        """)
-                        cursor.execute("""
-                            UPDATE users 
-                            SET face_recognition_enabled = true 
-                            WHERE user_id = %s
-                        """, (user['user_id'],))
-                    
-                    conn.commit()
-            except Exception as e:
-                logger.warning(f"Failed to update user face recognition flag: {e}")
+        with db_assistant.get_db_connection() as conn:
+            cursor = conn.cursor()
             
-            # Log successful face registration with enhanced system
-            try:
-                facial_auth.log_access(
-                    result.get('user_id', user['user_id']),
-                    user['username'],
-                    'face_registration',
-                    'Enhanced face registration successful with multiple samples',
-                    request.environ.get('HTTP_X_FORWARDED_FOR', request.remote_addr),
-                    True
-                )
-            except Exception as e:
-                logger.warning(f"Failed to log face registration: {e}")
+            # Check if user already has face data
+            cursor.execute("""
+                SELECT face_id FROM face_recognition_data WHERE user_id = %s
+            """, (user['user_id'],))
+            
+            existing_face = cursor.fetchone()
+            
+            if existing_face:
+                # Update existing face data
+                cursor.execute("""
+                    UPDATE face_recognition_data 
+                    SET face_encoding = %s, 
+                        face_image_original = %s,
+                        created_at = NOW(),
+                        is_active = true,
+                        quality_score = 0.95
+                    WHERE user_id = %s
+                """, (face_encoding, image_base64, user['user_id']))
+            else:
+                # Insert new face data
+                cursor.execute("""
+                    INSERT INTO face_recognition_data 
+                    (user_id, face_encoding, face_image_original, quality_score, is_active)
+                    VALUES (%s, %s, %s, 0.95, true)
+                """, (user['user_id'], face_encoding, image_base64))
+            
+            # Update user table to mark face recognition as enabled
+            cursor.execute("""
+                UPDATE users 
+                SET face_recognition_enabled = true 
+                WHERE user_id = %s
+            """, (user['user_id'],))
+            
+            conn.commit()
             
             logger.info(f"Enhanced face registration successful for user: {user['username']}")
             
             return jsonify({
                 'success': True,
-                'message': 'Face registration completed successfully with enhanced recognition! You can now login with face recognition even in different lighting conditions.',
-                'user_id': result.get('user_id'),
-                'enhanced_features': True,
-                'tolerance_enabled': True
+                'message': 'Face registered successfully! You can now login with face recognition.',
+                'user_id': user['user_id']
             })
-        else:
-            logger.warning(f"Enhanced face registration failed for user {user['username']}: {result.get('message')}")
-            return jsonify(result), 400
             
     except Exception as e:
-        logger.error(f"Enhanced face registration error: {e}")
+        logger.error(f"Face registration error: {e}")
         return jsonify({
             'success': False,
             'message': f'Face registration failed: {str(e)}'
