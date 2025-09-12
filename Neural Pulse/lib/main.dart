@@ -8,16 +8,13 @@ import 'package:permission_handler/permission_handler.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  
-  // Force portrait orientation only
-  await SystemChrome.setPreferredOrientations([
-    DeviceOrientation.portraitUp,
-  ]);
-  
-  runApp(MyApp());
+  await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+  runApp(const MyApp());
 }
 
 class MyApp extends StatelessWidget {
+  const MyApp({Key? key}) : super(key: key);
+
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
@@ -25,19 +22,18 @@ class MyApp extends StatelessWidget {
       theme: ThemeData(
         useMaterial3: true,
         colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF00FFFF), // Bright cyan from icon
+          seedColor: const Color(0xFF4A148C),
           brightness: Brightness.dark,
-          primary: const Color(0xFF00FFFF), // Bright cyan
-          secondary: const Color(0xFF0080FF), // Electric blue
-          tertiary: const Color(0xFF8000FF), // Purple
-          surface: const Color(0xFF000000), // Black background
-          background: const Color(0xFF000000), // Black background
+          primary: const Color(0xFF4A148C),
+          secondary: const Color(0xFF6A1B9A),
+          tertiary: const Color(0xFF4A148C),
+          surface: const Color(0xFF000000),
         ),
-        scaffoldBackgroundColor: const Color(0xFF000000), // Pure black like icon
-        appBarTheme: AppBarTheme(
+        scaffoldBackgroundColor: const Color(0xFF000000),
+        appBarTheme: const AppBarTheme(
           backgroundColor: Colors.transparent,
           elevation: 0,
-          foregroundColor: const Color(0xFF00FFFF),
+          foregroundColor: Colors.white,
         ),
       ),
       home: AuthWrapper(),
@@ -46,7 +42,6 @@ class MyApp extends StatelessWidget {
   }
 }
 
-// User Model
 class User {
   final int id;
   final String username;
@@ -76,9 +71,7 @@ class User {
       fullName: json['full_name'] ?? json['name'] ?? '',
       email: json['email'] ?? '',
       isActive: json['is_active'] ?? true,
-      createdAt: json['created_at'] != null 
-          ? DateTime.parse(json['created_at'])
-          : DateTime.now(),
+      createdAt: json['created_at'] != null ? DateTime.parse(json['created_at']) : DateTime.now(),
       faceRecognitionEnabled: json['face_recognition_enabled'] ?? false,
     );
   }
@@ -88,16 +81,15 @@ class User {
   
   Color get roleColor {
     switch (role) {
-      case 'visitor': return const Color(0xFF00FF80);  // Bright green from icon
-      case 'viewer': return const Color(0xFF00FFFF);   // Bright cyan
-      case 'manager': return const Color(0xFF0080FF);  // Electric blue
-      case 'admin': return const Color(0xFF8000FF);    // Purple from icon
+      case 'visitor': return const Color(0xFF7B1FA2);
+      case 'viewer': return const Color(0xFF6A1B9A);
+      case 'manager': return const Color(0xFF4A148C);
+      case 'admin': return const Color(0xFF2E0249);
       default: return const Color(0xFF808080);
     }
   }
 }
 
-// Message Model
 class Message {
   final String sender;
   final String content;
@@ -116,7 +108,6 @@ class Message {
 
 enum MessageType { user, assistant, system, error, chart }
 
-// API Service
 class ApiService {
   static const String baseUrl = 'https://database-assistant-clean-production.up.railway.app';
   static Map<String, String> _cookies = {};
@@ -128,9 +119,7 @@ class ApiService {
     };
     
     if (_cookies.isNotEmpty) {
-      String cookieString = _cookies.entries
-          .map((entry) => '${entry.key}=${entry.value}')
-          .join('; ');
+      String cookieString = _cookies.entries.map((entry) => '${entry.key}=${entry.value}').join('; ');
       headers['Cookie'] = cookieString;
     }
     
@@ -141,13 +130,23 @@ class ApiService {
     _cookies.addAll(cookies);
   }
   
-  static Future<Map<String, dynamic>> sendQuery(String query) async {
+  static Future<Map<String, dynamic>> sendQuery(String query, {List<Message>? conversationHistory}) async {
     try {
+      Map<String, dynamic> requestBody = {'query': query};
+      
+      if (conversationHistory != null && conversationHistory.isNotEmpty) {
+        requestBody['conversation_history'] = conversationHistory.map((msg) => {
+          'sender': msg.sender,
+          'content': msg.content,
+          'timestamp': msg.timestamp.toIso8601String(),
+        }).toList();
+      }
+
       final response = await http.post(
         Uri.parse('$baseUrl/query'),
         headers: _getHeaders(),
-        body: json.encode({'query': query}),
-      ).timeout(Duration(seconds: 60));
+        body: json.encode(requestBody),
+      ).timeout(const Duration(seconds: 60));
       
       return json.decode(response.body);
     } catch (e) {
@@ -160,7 +159,7 @@ class ApiService {
       final response = await http.get(
         Uri.parse('$baseUrl/admin/users'),
         headers: _getHeaders(),
-      ).timeout(Duration(seconds: 30));
+      ).timeout(const Duration(seconds: 30));
       
       return json.decode(response.body);
     } catch (e) {
@@ -186,7 +185,20 @@ class ApiService {
           'email': email,
           'role': role,
         }),
-      ).timeout(Duration(seconds: 30));
+      ).timeout(const Duration(seconds: 30));
+      
+      return json.decode(response.body);
+    } catch (e) {
+      return {'success': false, 'message': 'Network error: $e'};
+    }
+  }
+
+  static Future<Map<String, dynamic>> deleteUser(int userId) async {
+    try {
+      final response = await http.delete(
+        Uri.parse('$baseUrl/admin/delete-user/$userId'),
+        headers: _getHeaders(),
+      ).timeout(const Duration(seconds: 30));
       
       return json.decode(response.body);
     } catch (e) {
@@ -200,7 +212,7 @@ class ApiService {
         Uri.parse('$baseUrl/facial-auth/register'),
         headers: _getHeaders(),
         body: json.encode({'image': imageBase64}),
-      ).timeout(Duration(seconds: 30));
+      ).timeout(const Duration(seconds: 30));
       
       return json.decode(response.body);
     } catch (e) {
@@ -209,7 +221,6 @@ class ApiService {
   }
 }
 
-// Facial Auth Service
 class FacialAuthService {
   static const String baseUrl = 'https://database-assistant-clean-production.up.railway.app';
 
@@ -217,9 +228,9 @@ class FacialAuthService {
     try {
       final response = await http.post(
         Uri.parse('$baseUrl/facial-auth/authenticate'),
-        headers: {'Content-Type': 'application/json'},
+        headers: const {'Content-Type': 'application/json'},
         body: json.encode({'image': imageBase64}),
-      ).timeout(Duration(seconds: 30));
+      ).timeout(const Duration(seconds: 30));
       
       return json.decode(response.body);
     } catch (e) {
@@ -228,7 +239,6 @@ class FacialAuthService {
   }
 }
 
-// Auth Service
 class AuthService {
   static const String baseUrl = 'https://database-assistant-clean-production.up.railway.app';
   static User? _currentUser;
@@ -258,12 +268,9 @@ class AuthService {
     try {
       final response = await http.post(
         Uri.parse('$baseUrl/login'),
-        headers: {'Content-Type': 'application/json'},
-        body: json.encode({
-          'username': username,
-          'password': password,
-        }),
-      ).timeout(Duration(seconds: 30));
+        headers: const {'Content-Type': 'application/json'},
+        body: json.encode({'username': username, 'password': password}),
+      ).timeout(const Duration(seconds: 30));
 
       if (response.statusCode == 200) {
         final result = json.decode(response.body);
@@ -326,8 +333,9 @@ class LoginResult {
   LoginResult.error(this.error) : success = false, user = null;
 }
 
-// Auth Wrapper
 class AuthWrapper extends StatefulWidget {
+  const AuthWrapper({Key? key}) : super(key: key);
+
   @override
   _AuthWrapperState createState() => _AuthWrapperState();
 }
@@ -343,7 +351,7 @@ class _AuthWrapperState extends State<AuthWrapper> {
   }
 
   Future<void> _checkAuthStatus() async {
-    await Future.delayed(Duration(seconds: 1));
+    await Future.delayed(const Duration(seconds: 1));
     if (mounted) {
       setState(() {
         _currentUser = AuthService.currentUser;
@@ -359,12 +367,13 @@ class _AuthWrapperState extends State<AuthWrapper> {
         body: Container(
           decoration: const BoxDecoration(
             gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
               colors: [
-                Color(0xFF000000), 
-                Color(0xFF1A1A1A),
-                Color(0xFF2A2A2A),
+                Color(0xFF000000),
+                Color(0xFF2E0249),
+                Color(0xFF4A148C),
+                Color(0xFF6A1B9A),
               ],
             ),
           ),
@@ -373,23 +382,19 @@ class _AuthWrapperState extends State<AuthWrapper> {
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 Container(
-                  padding: EdgeInsets.all(20),
+                  padding: const EdgeInsets.all(20),
                   decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      colors: [Color(0xFF00FFFF), Color(0xFF0080FF)],
-                    ),
+                    gradient: const LinearGradient(colors: [Color(0xFF4A148C), Color(0xFF6A1B9A)]),
                     borderRadius: BorderRadius.circular(20),
                   ),
-                  child: Icon(Icons.psychology, size: 64, color: Colors.white),
+                  child: const Icon(Icons.psychology, size: 64, color: Colors.white),
                 ),
-                SizedBox(height: 24),
-                Text('Neural Pulse', style: TextStyle(color: Colors.white, fontSize: 28, fontWeight: FontWeight.bold)),
-                SizedBox(height: 8),
-                Text('AI Database Assistant', style: TextStyle(color: Color(0xFF00FFFF), fontSize: 16)),
-                SizedBox(height: 32),
-                CircularProgressIndicator(
-                  valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF00FFFF)),
-                ),
+                const SizedBox(height: 24),
+                const Text('Neural Pulse', style: TextStyle(color: Colors.white, fontSize: 28, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 8),
+                const Text('AI Database Assistant', style: TextStyle(color: Colors.white70, fontSize: 16)),
+                const SizedBox(height: 32),
+                const CircularProgressIndicator(valueColor: AlwaysStoppedAnimation<Color>(Colors.white)),
               ],
             ),
           ),
@@ -397,26 +402,26 @@ class _AuthWrapperState extends State<AuthWrapper> {
       );
     }
 
-    return _currentUser != null
-        ? MainNavigationScreen(user: _currentUser!)
-        : LoginSelectionScreen();
+    return _currentUser != null ? MainNavigationScreen(user: _currentUser!) : const LoginSelectionScreen();
   }
 }
 
-// Login Selection Screen
 class LoginSelectionScreen extends StatelessWidget {
+  const LoginSelectionScreen({Key? key}) : super(key: key);
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       body: Container(
         decoration: const BoxDecoration(
           gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
             colors: [
-              Color(0xFF000000), 
-              Color(0xFF1A1A1A),
-              Color(0xFF2A2A2A),
+              Color(0xFF000000),
+              Color(0xFF2E0249),
+              Color(0xFF4A148C),
+              Color(0xFF6A1B9A),
             ],
           ),
         ),
@@ -428,55 +433,49 @@ class LoginSelectionScreen extends StatelessWidget {
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   Container(
-                    padding: EdgeInsets.all(20),
+                    padding: const EdgeInsets.all(20),
                     decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        colors: [Color(0xFF00FFFF), Color(0xFF0080FF)],
-                      ),
+                      gradient: const LinearGradient(colors: [Color(0xFF4A148C), Color(0xFF6A1B9A)]),
                       borderRadius: BorderRadius.circular(20),
                     ),
-                    child: Icon(Icons.psychology, size: 64, color: Colors.white),
+                    child: const Icon(Icons.psychology, size: 64, color: Colors.white),
                   ),
-                  SizedBox(height: 32),
-                  Text('Neural Pulse', style: TextStyle(color: Colors.white, fontSize: 32, fontWeight: FontWeight.bold)),
-                  SizedBox(height: 8),
-                  Text('AI Database Assistant', style: TextStyle(color: Color(0xFF00FFFF), fontSize: 18)),
-                  SizedBox(height: 48),
+                  const SizedBox(height: 32),
+                  const Text('Neural Pulse', style: TextStyle(color: Colors.white, fontSize: 32, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 8),
+                  const Text('AI Database Assistant', style: TextStyle(color: Colors.white70, fontSize: 18)),
+                  const SizedBox(height: 48),
                   
                   SizedBox(
                     width: double.infinity,
                     child: ElevatedButton.icon(
-                      onPressed: () {
-                        Navigator.push(context, MaterialPageRoute(builder: (context) => LoginScreen()));
-                      },
+                      onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (context) => const LoginScreen())),
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: Color(0xFF00FFFF),
+                        backgroundColor: const Color(0xFF4A148C),
                         foregroundColor: Colors.white,
-                        padding: EdgeInsets.symmetric(vertical: 16),
+                        padding: const EdgeInsets.symmetric(vertical: 16),
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
                         elevation: 0,
                       ),
-                      icon: Icon(Icons.login, color: Colors.white),
-                      label: Text('Login with Username', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+                      icon: const Icon(Icons.login, color: Colors.white),
+                      label: const Text('Login with Username', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
                     ),
                   ),
                   
-                  SizedBox(height: 16),
+                  const SizedBox(height: 16),
                   
                   SizedBox(
                     width: double.infinity,
                     child: OutlinedButton.icon(
-                      onPressed: () {
-                        Navigator.push(context, MaterialPageRoute(builder: (context) => FacialLoginScreen()));
-                      },
+                      onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (context) => const FacialLoginScreen())),
                       style: OutlinedButton.styleFrom(
-                        side: BorderSide(color: Color(0xFF0080FF), width: 2),
-                        foregroundColor: Color(0xFF0080FF),
-                        padding: EdgeInsets.symmetric(vertical: 16),
+                        side: const BorderSide(color: Colors.white, width: 2),
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 16),
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
                       ),
-                      icon: Icon(Icons.face, color: Color(0xFF0080FF)),
-                      label: Text('Login with Face Recognition', style: TextStyle(color: Color(0xFF0080FF), fontSize: 16, fontWeight: FontWeight.bold)),
+                      icon: const Icon(Icons.face, color: Colors.white),
+                      label: const Text('Login with Face Recognition', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
                     ),
                   ),
                 ],
@@ -489,8 +488,9 @@ class LoginSelectionScreen extends StatelessWidget {
   }
 }
 
-// Username Login Screen
 class LoginScreen extends StatefulWidget {
+  const LoginScreen({Key? key}) : super(key: key);
+
   @override
   _LoginScreenState createState() => _LoginScreenState();
 }
@@ -520,10 +520,7 @@ class _LoginScreenState extends State<LoginScreen> {
     });
     
     try {
-      final result = await AuthService.login(
-        _usernameController.text.trim(),
-        _passwordController.text,
-      );
+      final result = await AuthService.login(_usernameController.text.trim(), _passwordController.text);
       
       if (result.success && result.user != null) {
         Navigator.pushAndRemoveUntil(
@@ -556,19 +553,20 @@ class _LoginScreenState extends State<LoginScreen> {
         backgroundColor: Colors.transparent,
         elevation: 0,
         leading: IconButton(
-          icon: Icon(Icons.arrow_back, color: Colors.white),
+          icon: const Icon(Icons.arrow_back, color: Colors.white),
           onPressed: () => Navigator.pop(context),
         ),
       ),
       body: Container(
         decoration: const BoxDecoration(
           gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
             colors: [
-              Color(0xFF000000), 
-              Color(0xFF1A1A1A),
-              Color(0xFF2A2A2A),
+              Color(0xFF000000),
+              Color(0xFF2E0249),
+              Color(0xFF4A148C),
+              Color(0xFF6A1B9A),
             ],
           ),
         ),
@@ -582,36 +580,34 @@ class _LoginScreenState extends State<LoginScreen> {
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
                     Container(
-                      padding: EdgeInsets.all(16),
+                      padding: const EdgeInsets.all(16),
                       decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          colors: [Color(0xFF00FFFF), Color(0xFF0080FF)],
-                        ),
+                        gradient: const LinearGradient(colors: [Color(0xFF4A148C), Color(0xFF6A1B9A)]),
                         borderRadius: BorderRadius.circular(16),
                       ),
-                      child: Icon(Icons.login, size: 48, color: Colors.white),
+                      child: const Icon(Icons.login, size: 48, color: Colors.white),
                     ),
-                    SizedBox(height: 32),
-                    Text('Username Login', style: TextStyle(color: Colors.white, fontSize: 28, fontWeight: FontWeight.bold)),
-                    SizedBox(height: 48),
+                    const SizedBox(height: 32),
+                    const Text('Username Login', style: TextStyle(color: Colors.white, fontSize: 28, fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 48),
                     
                     TextFormField(
                       controller: _usernameController,
-                      style: TextStyle(color: Colors.white),
+                      style: const TextStyle(color: Colors.white),
                       decoration: InputDecoration(
                         labelText: 'Username',
-                        labelStyle: TextStyle(color: Colors.white70),
-                        prefixIcon: Icon(Icons.person, color: Color(0xFF00FFFF)),
+                        labelStyle: const TextStyle(color: Colors.white70),
+                        prefixIcon: const Icon(Icons.person, color: Colors.white),
                         filled: true,
-                        fillColor: Color(0xFF1A1A1A).withOpacity(0.6),
+                        fillColor: const Color(0xFF1A1A1A).withValues(alpha: 0.6),
                         border: OutlineInputBorder(borderRadius: BorderRadius.circular(15), borderSide: BorderSide.none),
                         enabledBorder: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(15),
-                          borderSide: BorderSide(color: Colors.white30, width: 1),
+                          borderSide: const BorderSide(color: Colors.white30, width: 1),
                         ),
                         focusedBorder: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(15),
-                          borderSide: BorderSide(color: Color(0xFF00FFFF), width: 2),
+                          borderSide: const BorderSide(color: Colors.white, width: 2),
                         ),
                       ),
                       validator: (value) {
@@ -622,37 +618,30 @@ class _LoginScreenState extends State<LoginScreen> {
                       },
                     ),
                     
-                    SizedBox(height: 16),
+                    const SizedBox(height: 16),
                     
                     TextFormField(
                       controller: _passwordController,
-                      style: TextStyle(color: Colors.white),
+                      style: const TextStyle(color: Colors.white),
                       obscureText: _obscurePassword,
                       decoration: InputDecoration(
                         labelText: 'Password',
-                        labelStyle: TextStyle(color: Colors.white70),
-                        prefixIcon: Icon(Icons.lock, color: Color(0xFF00FFFF)),
+                        labelStyle: const TextStyle(color: Colors.white70),
+                        prefixIcon: const Icon(Icons.lock, color: Colors.white),
                         suffixIcon: IconButton(
-                          icon: Icon(
-                            _obscurePassword ? Icons.visibility : Icons.visibility_off,
-                            color: Colors.white70,
-                          ),
-                          onPressed: () {
-                            setState(() {
-                              _obscurePassword = !_obscurePassword;
-                            });
-                          },
+                          icon: Icon(_obscurePassword ? Icons.visibility : Icons.visibility_off, color: Colors.white70),
+                          onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
                         ),
                         filled: true,
-                        fillColor: Color(0xFF1A1A1A).withOpacity(0.6),
+                        fillColor: const Color(0xFF1A1A1A).withValues(alpha: 0.6),
                         border: OutlineInputBorder(borderRadius: BorderRadius.circular(15), borderSide: BorderSide.none),
                         enabledBorder: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(15),
-                          borderSide: BorderSide(color: Colors.white30, width: 1),
+                          borderSide: const BorderSide(color: Colors.white30, width: 1),
                         ),
                         focusedBorder: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(15),
-                          borderSide: BorderSide(color: Color(0xFF00FFFF), width: 2),
+                          borderSide: const BorderSide(color: Colors.white, width: 2),
                         ),
                       ),
                       validator: (value) {
@@ -664,22 +653,22 @@ class _LoginScreenState extends State<LoginScreen> {
                       onFieldSubmitted: (_) => _login(),
                     ),
                     
-                    SizedBox(height: 24),
+                    const SizedBox(height: 24),
                     
                     if (_errorMessage != null)
                       Container(
-                        padding: EdgeInsets.all(12),
-                        margin: EdgeInsets.only(bottom: 16),
+                        padding: const EdgeInsets.all(12),
+                        margin: const EdgeInsets.only(bottom: 16),
                         decoration: BoxDecoration(
-                          color: Colors.red.withOpacity(0.1),
+                          color: Colors.red.withValues(alpha: 0.1),
                           borderRadius: BorderRadius.circular(8),
-                          border: Border.all(color: Colors.red.withOpacity(0.3)),
+                          border: Border.all(color: Colors.red.withValues(alpha: 0.3)),
                         ),
                         child: Row(
                           children: [
-                            Icon(Icons.error, color: Colors.red, size: 20),
-                            SizedBox(width: 8),
-                            Expanded(child: Text(_errorMessage!, style: TextStyle(color: Colors.red))),
+                            const Icon(Icons.error, color: Colors.red, size: 20),
+                            const SizedBox(width: 8),
+                            Expanded(child: Text(_errorMessage!, style: const TextStyle(color: Colors.red))),
                           ],
                         ),
                       ),
@@ -689,19 +678,15 @@ class _LoginScreenState extends State<LoginScreen> {
                       child: ElevatedButton(
                         onPressed: _isLoading ? null : _login,
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: Color(0xFF00FFFF),
+                          backgroundColor: const Color(0xFF4A148C),
                           foregroundColor: Colors.white,
-                          padding: EdgeInsets.symmetric(vertical: 16),
+                          padding: const EdgeInsets.symmetric(vertical: 16),
                           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
                           elevation: 0,
                         ),
                         child: _isLoading
-                            ? SizedBox(
-                                height: 20,
-                                width: 20,
-                                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                              )
-                            : Text('Sign In', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+                            ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                            : const Text('Sign In', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
                       ),
                     ),
                   ],
@@ -715,8 +700,9 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 }
 
-// Facial Recognition Login Screen
 class FacialLoginScreen extends StatefulWidget {
+  const FacialLoginScreen({Key? key}) : super(key: key);
+
   @override
   _FacialLoginScreenState createState() => _FacialLoginScreenState();
 }
@@ -743,21 +729,13 @@ class _FacialLoginScreenState extends State<FacialLoginScreen> {
     try {
       final status = await Permission.camera.request();
       if (status != PermissionStatus.granted) {
-        if (mounted) {
-          setState(() {
-            _errorMessage = 'Camera permission is required for facial recognition';
-          });
-        }
+        if (mounted) setState(() => _errorMessage = 'Camera permission is required for facial recognition');
         return;
       }
 
       final cameras = await availableCameras();
       if (cameras.isEmpty) {
-        if (mounted) {
-          setState(() {
-            _errorMessage = 'No cameras available on this device';
-          });
-        }
+        if (mounted) setState(() => _errorMessage = 'No cameras available on this device');
         return;
       }
 
@@ -768,23 +746,15 @@ class _FacialLoginScreenState extends State<FacialLoginScreen> {
 
       _cameraController = CameraController(
         camera, 
-        ResolutionPreset.high, 
-        enableAudio: false,
-        imageFormatGroup: ImageFormatGroup.jpeg,
+        ResolutionPreset.high,
+        enableAudio: false, 
+        imageFormatGroup: ImageFormatGroup.jpeg
       );
       await _cameraController!.initialize();
       
-      if (mounted) {
-        setState(() {
-          _isCameraInitialized = true;
-        });
-      }
+      if (mounted) setState(() => _isCameraInitialized = true);
     } catch (e) {
-      if (mounted) {
-        setState(() {
-          _errorMessage = 'Failed to initialize camera: $e';
-        });
-      }
+      if (mounted) setState(() => _errorMessage = 'Failed to initialize camera: $e');
     }
   }
 
@@ -834,85 +804,80 @@ class _FacialLoginScreenState extends State<FacialLoginScreen> {
         backgroundColor: Colors.transparent,
         elevation: 0,
         leading: IconButton(
-          icon: Icon(Icons.arrow_back, color: Colors.white),
+          icon: const Icon(Icons.arrow_back, color: Colors.white),
           onPressed: () => Navigator.pop(context),
         ),
-        title: Text('Facial Recognition Login', style: TextStyle(color: Colors.white)),
+        title: const Text('Facial Recognition Login', style: TextStyle(color: Colors.white)),
       ),
       body: Container(
         decoration: const BoxDecoration(
           gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
             colors: [
-              Color(0xFF000000), 
-              Color(0xFF1A1A1A),
-              Color(0xFF2A2A2A),
+              Color(0xFF000000),
+              Color(0xFF2E0249),
+              Color(0xFF4A148C),
+              Color(0xFF6A1B9A),
             ],
           ),
         ),
         child: SafeArea(
-          child: Center(
+          child: SingleChildScrollView(
             child: Padding(
-              padding: const EdgeInsets.all(32.0),
+              padding: const EdgeInsets.all(24.0),
               child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   if (!_isCameraInitialized) ...[
+                    const SizedBox(height: 50),
                     Container(
-                      padding: EdgeInsets.all(16),
+                      padding: const EdgeInsets.all(16),
                       decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          colors: [Color(0xFF00FFFF), Color(0xFF0080FF)],
-                        ),
+                        gradient: const LinearGradient(colors: [Color(0xFF4A148C), Color(0xFF6A1B9A)]),
                         borderRadius: BorderRadius.circular(16),
                       ),
-                      child: Icon(Icons.face, size: 48, color: Colors.white),
+                      child: const Icon(Icons.face, size: 48, color: Colors.white),
                     ),
-                    SizedBox(height: 32),
-                    Text('Initializing Camera...', style: TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold)),
-                    SizedBox(height: 16),
-                    CircularProgressIndicator(
-                      valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF00FFFF)),
-                    ),
+                    const SizedBox(height: 32),
+                    const Text('Initializing Camera...', style: TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 16),
+                    const CircularProgressIndicator(valueColor: AlwaysStoppedAnimation<Color>(Colors.white)),
                   ] else ...[
+                    const SizedBox(height: 20),
                     Container(
-                      width: 280,
-                      height: 350,
+                      width: MediaQuery.of(context).size.width * 0.8,
+                      height: MediaQuery.of(context).size.height * 0.45,
                       decoration: BoxDecoration(
                         borderRadius: BorderRadius.circular(20),
-                        border: Border.all(color: Color(0xFF00FFFF), width: 3),
+                        border: Border.all(color: Colors.white, width: 3),
                       ),
                       child: ClipRRect(
                         borderRadius: BorderRadius.circular(17),
-                        child: AspectRatio(
-                          aspectRatio: 3/4, // Fixed aspect ratio for portrait
-                          child: CameraPreview(_cameraController!),
-                        ),
+                        child: CameraPreview(_cameraController!),
                       ),
                     ),
-                    SizedBox(height: 32),
-                    Text('Position your face in the frame', style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold)),
-                    SizedBox(height: 8),
-                    Text('Make sure your face is well-lit and clearly visible', style: TextStyle(color: Colors.white70, fontSize: 16), textAlign: TextAlign.center),
+                    const SizedBox(height: 24),
+                    const Text('Position your face in the frame', style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 8),
+                    const Text('Enhanced recognition with lighting tolerance enabled', style: TextStyle(color: Colors.white70, fontSize: 16), textAlign: TextAlign.center),
                   ],
                   
-                  SizedBox(height: 48),
+                  const SizedBox(height: 30),
                   
                   if (_errorMessage != null)
                     Container(
-                      padding: EdgeInsets.all(12),
-                      margin: EdgeInsets.only(bottom: 16),
+                      padding: const EdgeInsets.all(12),
+                      margin: const EdgeInsets.only(bottom: 16),
                       decoration: BoxDecoration(
-                        color: Colors.red.withOpacity(0.1),
+                        color: Colors.red.withValues(alpha: 0.1),
                         borderRadius: BorderRadius.circular(8),
-                        border: Border.all(color: Colors.red.withOpacity(0.3)),
+                        border: Border.all(color: Colors.red.withValues(alpha: 0.3)),
                       ),
                       child: Row(
                         children: [
-                          Icon(Icons.error, color: Colors.red, size: 20),
-                          SizedBox(width: 8),
-                          Expanded(child: Text(_errorMessage!, style: TextStyle(color: Colors.red))),
+                          const Icon(Icons.error, color: Colors.red, size: 20),
+                          const SizedBox(width: 8),
+                          Expanded(child: Text(_errorMessage!, style: const TextStyle(color: Colors.red))),
                         ],
                       ),
                     ),
@@ -923,25 +888,22 @@ class _FacialLoginScreenState extends State<FacialLoginScreen> {
                       child: ElevatedButton.icon(
                         onPressed: _isLoading ? null : _takePictureAndAuthenticate,
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: Color(0xFF00FFFF),
+                          backgroundColor: const Color(0xFF4A148C),
                           foregroundColor: Colors.white,
-                          padding: EdgeInsets.symmetric(vertical: 16),
+                          padding: const EdgeInsets.symmetric(vertical: 16),
                           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
                           elevation: 0,
                         ),
                         icon: _isLoading
-                            ? SizedBox(
-                                height: 20,
-                                width: 20,
-                                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                              )
-                            : Icon(Icons.camera_alt, color: Colors.white),
+                            ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                            : const Icon(Icons.camera_alt, color: Colors.white),
                         label: Text(
                           _isLoading ? 'Authenticating...' : 'Authenticate with Face',
-                          style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+                          style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
                         ),
                       ),
                     ),
+                  const SizedBox(height: 20),
                 ],
               ),
             ),
@@ -952,7 +914,6 @@ class _FacialLoginScreenState extends State<FacialLoginScreen> {
   }
 }
 
-// Main Navigation Screen
 class MainNavigationScreen extends StatefulWidget {
   final User user;
 
@@ -964,11 +925,31 @@ class MainNavigationScreen extends StatefulWidget {
 
 class _MainNavigationScreenState extends State<MainNavigationScreen> {
   int _currentIndex = 0;
+  List<Message> _chatMessages = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _initializeChat();
+  }
+
+  void _initializeChat() {
+    _chatMessages.add(Message(
+      sender: 'AI Assistant',
+      content: 'Hi ${widget.user.username}! I\'m your AI Database Assistant.',
+      type: MessageType.system,
+      timestamp: DateTime.now(),
+    ));
+  }
+
+  void _addMessage(Message message) {
+    setState(() => _chatMessages.add(message));
+  }
 
   Widget _getCurrentScreen() {
     switch (_currentIndex) {
       case 0:
-        return ChatScreen(user: widget.user);
+        return ChatScreen(user: widget.user, messages: _chatMessages, onMessageAdded: _addMessage);
       case 1:
         if (widget.user.canManageUsers) {
           return UserManagementScreen(user: widget.user);
@@ -984,23 +965,23 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
       case 3:
         return ProfileScreen(user: widget.user);
       default:
-        return ChatScreen(user: widget.user);
+        return ChatScreen(user: widget.user, messages: _chatMessages, onMessageAdded: _addMessage);
     }
   }
 
   List<BottomNavigationBarItem> _getBottomNavItems() {
     List<BottomNavigationBarItem> items = [
-      BottomNavigationBarItem(icon: Icon(Icons.chat_bubble), label: 'Chat'),
+      const BottomNavigationBarItem(icon: Icon(Icons.chat_bubble), label: 'Chat'),
     ];
     
     if (widget.user.canManageUsers) {
-      items.add(BottomNavigationBarItem(icon: Icon(Icons.people), label: 'Users'));
-      items.add(BottomNavigationBarItem(icon: Icon(Icons.settings), label: 'Settings'));
+      items.add(const BottomNavigationBarItem(icon: Icon(Icons.people), label: 'Users'));
+      items.add(const BottomNavigationBarItem(icon: Icon(Icons.settings), label: 'Settings'));
     } else {
-      items.add(BottomNavigationBarItem(icon: Icon(Icons.settings), label: 'Settings'));
+      items.add(const BottomNavigationBarItem(icon: Icon(Icons.settings), label: 'Settings'));
     }
     
-    items.add(BottomNavigationBarItem(icon: Icon(Icons.person), label: 'Profile'));
+    items.add(const BottomNavigationBarItem(icon: Icon(Icons.person), label: 'Profile'));
     
     return items;
   }
@@ -1010,16 +991,16 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
       context: context,
       builder: (context) => AlertDialog(
         backgroundColor: const Color(0xFF1A1A1A),
-        title: Text('Logout', style: TextStyle(color: Colors.white)),
-        content: Text('Are you sure you want to logout?', style: TextStyle(color: Colors.white70)),
+        title: const Text('Logout', style: TextStyle(color: Colors.white)),
+        content: const Text('Are you sure you want to logout?', style: TextStyle(color: Colors.white70)),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: Text('Cancel', style: TextStyle(color: Colors.grey)),
+            child: const Text('Cancel', style: TextStyle(color: Colors.white70)),
           ),
           TextButton(
             onPressed: () => Navigator.pop(context, true),
-            child: Text('Logout', style: TextStyle(color: Color(0xFF8000FF))),
+            child: const Text('Logout', style: TextStyle(color: Color(0xFF4A148C))),
           ),
         ],
       ),
@@ -1029,7 +1010,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
       await AuthService.logout();
       Navigator.pushAndRemoveUntil(
         context,
-        MaterialPageRoute(builder: (context) => LoginSelectionScreen()),
+        MaterialPageRoute(builder: (context) => const LoginSelectionScreen()),
         (route) => false,
       );
     }
@@ -1041,12 +1022,13 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
       body: Container(
         decoration: const BoxDecoration(
           gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
             colors: [
-              Color(0xFF000000), 
-              Color(0xFF1A1A1A),
-              Color(0xFF2A2A2A),
+              Color(0xFF000000),
+              Color(0xFF2E0249),
+              Color(0xFF4A148C),
+              Color(0xFF6A1B9A),
             ],
           ),
         ),
@@ -1056,23 +1038,20 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
               padding: const EdgeInsets.fromLTRB(20, 50, 20, 20),
               decoration: BoxDecoration(
                 gradient: LinearGradient(
-                  colors: [Color(0xFF00FFFF).withOpacity(0.3), Color(0xFF0080FF).withOpacity(0.2)],
+                  colors: [const Color(0xFF4A148C).withValues(alpha: 0.3), const Color(0xFF6A1B9A).withValues(alpha: 0.2)],
                 ),
-                borderRadius: BorderRadius.only(
+                borderRadius: const BorderRadius.only(
                   bottomLeft: Radius.circular(30),
                   bottomRight: Radius.circular(30),
                 ),
               ),
               child: SafeArea(
-                bottom: false,
                 child: Row(
                   children: [
                     Container(
-                      padding: EdgeInsets.all(8),
+                      padding: const EdgeInsets.all(8),
                       decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          colors: [Color(0xFF00FFFF), Color(0xFF0080FF)],
-                        ),
+                        gradient: const LinearGradient(colors: [Color(0xFF4A148C), Color(0xFF6A1B9A)]),
                         borderRadius: BorderRadius.circular(12),
                       ),
                       child: Icon(
@@ -1081,26 +1060,26 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
                         size: 24,
                       ),
                     ),
-                    SizedBox(width: 16),
+                    const SizedBox(width: 16),
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text('Neural Pulse', style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold)),
+                          const Text('Neural Pulse', style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold)),
                           Row(
                             children: [
-                              Text('Welcome, ${widget.user.username}', style: TextStyle(color: Colors.white.withOpacity(0.8), fontSize: 14)),
-                              SizedBox(width: 8),
+                              Text('Welcome, ${widget.user.username}', style: const TextStyle(color: Colors.white70, fontSize: 14)),
+                              const SizedBox(width: 8),
                               Container(
-                                padding: EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                                 decoration: BoxDecoration(
-                                  color: widget.user.roleColor.withOpacity(0.2),
+                                  color: widget.user.roleColor.withValues(alpha: 0.2),
                                   borderRadius: BorderRadius.circular(12),
-                                  border: Border.all(color: widget.user.roleColor.withOpacity(0.5)),
+                                  border: Border.all(color: widget.user.roleColor.withValues(alpha: 0.5)),
                                 ),
                                 child: Text(
                                   widget.user.role.toUpperCase(),
-                                  style: TextStyle(color: widget.user.roleColor, fontSize: 10, fontWeight: FontWeight.bold),
+                                  style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
                                 ),
                               ),
                             ],
@@ -1110,7 +1089,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
                     ),
                     IconButton(
                       onPressed: _logout,
-                      icon: Icon(Icons.logout, color: Color(0xFF8000FF), size: 20),
+                      icon: const Icon(Icons.logout, color: Colors.white, size: 20),
                     ),
                   ],
                 ),
@@ -1124,20 +1103,21 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
         currentIndex: _currentIndex,
         onTap: (index) => setState(() => _currentIndex = index),
         type: BottomNavigationBarType.fixed,
-        backgroundColor: Color(0xFF1A1A1A),
-        selectedItemColor: Color(0xFF00FFFF),
-        unselectedItemColor: Colors.white.withOpacity(0.6),
+        backgroundColor: const Color(0xFF1A1A1A),
+        selectedItemColor: Colors.white,
+        unselectedItemColor: Colors.white60,
         items: _getBottomNavItems(),
       ),
     );
   }
 }
 
-// Chat Screen
 class ChatScreen extends StatefulWidget {
   final User user;
+  final List<Message> messages;
+  final Function(Message) onMessageAdded;
 
-  const ChatScreen({Key? key, required this.user}) : super(key: key);
+  const ChatScreen({Key? key, required this.user, required this.messages, required this.onMessageAdded}) : super(key: key);
 
   @override
   _ChatScreenState createState() => _ChatScreenState();
@@ -1146,14 +1126,7 @@ class ChatScreen extends StatefulWidget {
 class _ChatScreenState extends State<ChatScreen> {
   final TextEditingController _controller = TextEditingController();
   final ScrollController _scrollController = ScrollController();
-  List<Message> _messages = [];
   bool _isLoading = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _initializeChat();
-  }
 
   @override
   void dispose() {
@@ -1162,46 +1135,12 @@ class _ChatScreenState extends State<ChatScreen> {
     super.dispose();
   }
 
-  void _initializeChat() {
-    _addMessage('AI Assistant', _getWelcomeMessage(), MessageType.system);
-  }
-
-  String _getWelcomeMessage() {
-    String baseMessage = 'Hi ${widget.user.username}! I\'m your AI Database Assistant.';
-    
-    switch (widget.user.role) {
-      case 'visitor':
-        return '$baseMessage I can help you with sales-related queries only.';
-      case 'viewer':
-        return '$baseMessage I can show you products, cities, invoices, and customer information.';
-      case 'manager':
-        return '$baseMessage I have full access to help you with products, invoices, customers, and receipt processing.';
-      case 'admin':
-        return '$baseMessage I have complete access to all database operations. How can I help you today?';
-      default:
-        return '$baseMessage How can I help you explore your data today?';
-    }
-  }
-
-  void _addMessage(String sender, String content, MessageType type, {Map<String, dynamic>? chartData}) {
-    setState(() {
-      _messages.add(Message(
-        sender: sender,
-        content: content,
-        type: type,
-        timestamp: DateTime.now(),
-        chartData: chartData,
-      ));
-    });
-    _scrollToBottom();
-  }
-
   void _scrollToBottom() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_scrollController.hasClients) {
         _scrollController.animateTo(
           _scrollController.position.maxScrollExtent,
-          duration: Duration(milliseconds: 300),
+          duration: const Duration(milliseconds: 300),
           curve: Curves.easeOut,
         );
       }
@@ -1213,29 +1152,43 @@ class _ChatScreenState extends State<ChatScreen> {
     if (message.isEmpty) return;
     
     _controller.clear();
-    _addMessage('You', message, MessageType.user);
+    
+    final userMessage = Message(
+      sender: 'You',
+      content: message,
+      type: MessageType.user,
+      timestamp: DateTime.now(),
+    );
+    widget.onMessageAdded(userMessage);
     
     setState(() => _isLoading = true);
     
     try {
-      Map<String, dynamic> response = await ApiService.sendQuery(message);
+      Map<String, dynamic> response = await ApiService.sendQuery(
+        message, 
+        conversationHistory: widget.messages.where((m) => m.type != MessageType.chart).toList()
+      );
       
       if (response['success'] == true) {
         String responseText = response['message'] ?? 'Query completed successfully.';
         
-        // Handle chart data if present
         Map<String, dynamic>? chartData;
         if (response['chart'] != null) {
           chartData = response['chart'];
         }
         
-        _addMessage('AI Assistant', responseText, MessageType.assistant, chartData: chartData);
+        final aiMessage = Message(
+          sender: 'AI Assistant',
+          content: responseText,
+          type: MessageType.assistant,
+          timestamp: DateTime.now(),
+          chartData: chartData,
+        );
+        widget.onMessageAdded(aiMessage);
         
-        // Show data if present
         if (response['data'] != null && response['data'].isNotEmpty) {
           List<dynamic> data = response['data'];
           if (data.length <= 10) {
-            // Show small datasets inline
             String dataText = '\n\nData:\n';
             for (var row in data.take(5)) {
               dataText += '• ${row.values.join(' | ')}\n';
@@ -1243,20 +1196,45 @@ class _ChatScreenState extends State<ChatScreen> {
             if (data.length > 5) {
               dataText += '... and ${data.length - 5} more rows';
             }
-            _addMessage('AI Assistant', dataText, MessageType.assistant);
+            
+            final dataMessage = Message(
+              sender: 'AI Assistant',
+              content: dataText,
+              type: MessageType.assistant,
+              timestamp: DateTime.now(),
+            );
+            widget.onMessageAdded(dataMessage);
           } else {
-            // Summarize large datasets
-            _addMessage('AI Assistant', '\n\nFound ${data.length} records. Showing summary of first few rows...', MessageType.assistant);
+            final summaryMessage = Message(
+              sender: 'AI Assistant',
+              content: '\n\nFound ${data.length} records.',
+              type: MessageType.assistant,
+              timestamp: DateTime.now(),
+            );
+            widget.onMessageAdded(summaryMessage);
           }
         }
       } else {
         String errorMessage = response['message'] ?? 'An error occurred while processing your request.';
-        _addMessage('AI Assistant', errorMessage, MessageType.error);
+        final errorMsg = Message(
+          sender: 'AI Assistant',
+          content: errorMessage,
+          type: MessageType.error,
+          timestamp: DateTime.now(),
+        );
+        widget.onMessageAdded(errorMsg);
       }
     } catch (e) {
-      _addMessage('AI Assistant', 'Network error: Please check your connection and try again.', MessageType.error);
+      final errorMsg = Message(
+        sender: 'AI Assistant',
+        content: 'Network error: Please check your connection and try again.',
+        type: MessageType.error,
+        timestamp: DateTime.now(),
+      );
+      widget.onMessageAdded(errorMsg);
     } finally {
       setState(() => _isLoading = false);
+      _scrollToBottom();
     }
   }
 
@@ -1266,21 +1244,21 @@ class _ChatScreenState extends State<ChatScreen> {
       children: [
         if (widget.user.role == 'visitor')
           Container(
-            margin: EdgeInsets.all(16),
-            padding: EdgeInsets.all(12),
+            margin: const EdgeInsets.all(16),
+            padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
-              color: widget.user.roleColor.withOpacity(0.1),
+              color: widget.user.roleColor.withValues(alpha: 0.1),
               borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: widget.user.roleColor.withOpacity(0.3)),
+              border: Border.all(color: widget.user.roleColor.withValues(alpha: 0.3)),
             ),
-            child: Row(
+            child: const Row(
               children: [
-                Icon(Icons.info, color: widget.user.roleColor, size: 20),
+                Icon(Icons.info, color: Colors.white, size: 20),
                 SizedBox(width: 8),
                 Expanded(
                   child: Text(
                     'You have visitor access - sales queries only',
-                    style: TextStyle(color: widget.user.roleColor, fontWeight: FontWeight.w500),
+                    style: TextStyle(color: Colors.white, fontWeight: FontWeight.w500),
                   ),
                 ),
               ],
@@ -1290,10 +1268,10 @@ class _ChatScreenState extends State<ChatScreen> {
         Expanded(
           child: ListView.builder(
             controller: _scrollController,
-            padding: EdgeInsets.all(16),
-            itemCount: _messages.length,
+            padding: const EdgeInsets.all(16),
+            itemCount: widget.messages.length,
             itemBuilder: (context, index) {
-              final message = _messages[index];
+              final message = widget.messages[index];
               return MessageBubble(message: message);
             },
           ),
@@ -1301,65 +1279,62 @@ class _ChatScreenState extends State<ChatScreen> {
         
         if (_isLoading)
           Container(
-            padding: EdgeInsets.all(16),
-            child: Row(
+            padding: const EdgeInsets.all(16),
+            child: const Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 SizedBox(
                   width: 20,
                   height: 20,
-                  child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF00FFFF)),
+                  child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
                 ),
                 SizedBox(width: 12),
-                Text('Processing your request...', style: TextStyle(color: Colors.white70)),
+                Text('Processing...', style: TextStyle(color: Colors.white70)),
               ],
             ),
           ),
         
         Container(
-          padding: EdgeInsets.fromLTRB(16, 8, 16, 16),
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
           decoration: BoxDecoration(
-            color: Color(0xFF1A1A1A).withOpacity(0.9),
-            border: Border(top: BorderSide(color: Color(0xFF00FFFF).withOpacity(0.3))),
+            color: const Color(0xFF1A1A1A).withValues(alpha: 0.9),
+            border: Border(top: BorderSide(color: Colors.white.withValues(alpha: 0.3))),
           ),
           child: SafeArea(
-            top: false,
             child: Row(
               children: [
                 Expanded(
                   child: Container(
-                    constraints: BoxConstraints(maxHeight: 60),
+                    constraints: const BoxConstraints(maxHeight: 60),
                     child: TextField(
                       controller: _controller,
-                      style: TextStyle(color: Colors.white),
+                      style: const TextStyle(color: Colors.white),
                       maxLines: 2,
                       textInputAction: TextInputAction.send,
                       decoration: InputDecoration(
-                        hintText: 'Ask me about your data...',
-                        hintStyle: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 14),
+                        hintText: 'Ask me anything...',
+                        hintStyle: const TextStyle(color: Colors.white54, fontSize: 14),
                         border: OutlineInputBorder(borderRadius: BorderRadius.circular(20), borderSide: BorderSide.none),
                         enabledBorder: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(20),
-                          borderSide: BorderSide(color: Colors.white30, width: 1),
+                          borderSide: const BorderSide(color: Colors.white30, width: 1),
                         ),
                         focusedBorder: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(20),
-                          borderSide: BorderSide(color: Color(0xFF00FFFF), width: 2),
+                          borderSide: const BorderSide(color: Colors.white, width: 2),
                         ),
-                        contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                         filled: true,
-                        fillColor: Color(0xFF1A1A1A).withOpacity(0.6),
+                        fillColor: const Color(0xFF1A1A1A).withValues(alpha: 0.6),
                       ),
                       onSubmitted: (_) => _sendMessage(),
                     ),
                   ),
                 ),
-                SizedBox(width: 8),
+                const SizedBox(width: 8),
                 Container(
                   decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      colors: [Color(0xFF00FFFF), Color(0xFF0080FF)],
-                    ),
+                    gradient: const LinearGradient(colors: [Color(0xFF4A148C), Color(0xFF6A1B9A)]),
                     borderRadius: BorderRadius.circular(20),
                   ),
                   child: ElevatedButton(
@@ -1367,10 +1342,10 @@ class _ChatScreenState extends State<ChatScreen> {
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.transparent,
                       shadowColor: Colors.transparent,
-                      shape: CircleBorder(),
-                      padding: EdgeInsets.all(12),
+                      shape: const CircleBorder(),
+                      padding: const EdgeInsets.all(12),
                     ),
-                    child: Icon(Icons.send, color: Colors.white, size: 20),
+                    child: const Icon(Icons.send, color: Colors.white, size: 20),
                   ),
                 ),
               ],
@@ -1382,7 +1357,6 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 }
 
-// Message Bubble
 class MessageBubble extends StatelessWidget {
   final Message message;
 
@@ -1391,11 +1365,9 @@ class MessageBubble extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      margin: EdgeInsets.only(bottom: 16),
+      margin: const EdgeInsets.only(bottom: 16),
       child: Row(
-        mainAxisAlignment: message.type == MessageType.user 
-            ? MainAxisAlignment.end 
-            : MainAxisAlignment.start,
+        mainAxisAlignment: message.type == MessageType.user ? MainAxisAlignment.end : MainAxisAlignment.start,
         children: [
           if (message.type != MessageType.user) ...[
             Container(
@@ -1405,48 +1377,50 @@ class MessageBubble extends StatelessWidget {
                 gradient: message.type == MessageType.error
                     ? LinearGradient(colors: [Colors.red, Colors.red.shade700])
                     : message.type == MessageType.system
-                        ? LinearGradient(colors: [Color(0xFF0080FF), Color(0xFF8000FF)])
-                        : LinearGradient(colors: [Color(0xFF00FFFF), Color(0xFF0080FF)]),
+                        ? const LinearGradient(colors: [Color(0xFF4A148C), Color(0xFF2E0249)])
+                        : const LinearGradient(colors: [Color(0xFF4A148C), Color(0xFF6A1B9A)]),
                 borderRadius: BorderRadius.circular(16),
               ),
               child: Icon(
                 message.type == MessageType.error
                     ? Icons.error
                     : message.type == MessageType.system
-                        ? Icons.info
+                        ? Icons.memory
                         : Icons.psychology,
                 color: Colors.white,
                 size: 16,
               ),
             ),
-            SizedBox(width: 12),
+            const SizedBox(width: 12),
           ],
           
           Flexible(
             child: Column(
-              crossAxisAlignment: message.type == MessageType.user 
-                  ? CrossAxisAlignment.end 
-                  : CrossAxisAlignment.start,
+              crossAxisAlignment: message.type == MessageType.user ? CrossAxisAlignment.end : CrossAxisAlignment.start,
               children: [
                 Container(
                   constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.75),
-                  padding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                   decoration: BoxDecoration(
                     gradient: message.type == MessageType.user
-                        ? LinearGradient(colors: [Color(0xFF00FFFF), Color(0xFF0080FF)])
+                        ? const LinearGradient(colors: [Color(0xFF4A148C), Color(0xFF6A1B9A)])
                         : null,
                     color: message.type == MessageType.user
                         ? null
                         : message.type == MessageType.error
-                            ? Color(0xFF7F1D1D)
-                            : Color(0xFF1A1A1A),
+                            ? const Color(0xFF7F1D1D)
+                            : message.type == MessageType.system
+                                ? const Color(0xFF2E0249).withValues(alpha: 0.5)
+                                : const Color(0xFF1A1A1A),
                     borderRadius: BorderRadius.circular(20),
                     border: message.type == MessageType.user
                         ? null
                         : Border.all(
                             color: message.type == MessageType.error
                                 ? Colors.red
-                                : Color(0xFF00FFFF).withOpacity(0.3),
+                                : message.type == MessageType.system
+                                    ? Colors.white.withValues(alpha: 0.3)
+                                    : Colors.white.withValues(alpha: 0.2),
                           ),
                   ),
                   child: Column(
@@ -1454,41 +1428,40 @@ class MessageBubble extends StatelessWidget {
                     children: [
                       Text(
                         message.content,
-                        style: TextStyle(color: Colors.white, fontSize: 16, height: 1.4),
+                        style: const TextStyle(color: Colors.white, fontSize: 16, height: 1.4),
                       ),
-                      SizedBox(height: 4),
+                      const SizedBox(height: 4),
                       Text(
                         '${message.timestamp.hour.toString().padLeft(2, '0')}:${message.timestamp.minute.toString().padLeft(2, '0')}',
-                        style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 11),
+                        style: const TextStyle(color: Colors.white54, fontSize: 11),
                       ),
                     ],
                   ),
                 ),
                 
-                // Chart display if present
                 if (message.chartData != null) ...[
-                  SizedBox(height: 8),
+                  const SizedBox(height: 8),
                   Container(
                     constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.75),
-                    padding: EdgeInsets.all(12),
+                    padding: const EdgeInsets.all(12),
                     decoration: BoxDecoration(
-                      color: Color(0xFF1A1A1A),
+                      color: const Color(0xFF1A1A1A),
                       borderRadius: BorderRadius.circular(15),
-                      border: Border.all(color: Color(0xFF00FFFF).withOpacity(0.3)),
+                      border: Border.all(color: Colors.white.withValues(alpha: 0.2)),
                     ),
                     child: Column(
                       children: [
                         Row(
                           children: [
-                            Icon(Icons.bar_chart, color: Color(0xFF00FFFF), size: 16),
-                            SizedBox(width: 8),
+                            const Icon(Icons.bar_chart, color: Colors.white, size: 16),
+                            const SizedBox(width: 8),
                             Text(
                               'Chart: ${message.chartData!['chart_type'] ?? 'data visualization'}',
-                              style: TextStyle(color: Colors.white70, fontSize: 12),
+                              style: const TextStyle(color: Colors.white70, fontSize: 12),
                             ),
                           ],
                         ),
-                        SizedBox(height: 8),
+                        const SizedBox(height: 8),
                         if (message.chartData!['chart_base64'] != null)
                           ClipRRect(
                             borderRadius: BorderRadius.circular(8),
@@ -1498,7 +1471,7 @@ class MessageBubble extends StatelessWidget {
                             ),
                           )
                         else
-                          Container(
+                          const SizedBox(
                             height: 100,
                             child: Center(
                               child: Text(
@@ -1516,16 +1489,16 @@ class MessageBubble extends StatelessWidget {
           ),
           
           if (message.type == MessageType.user) ...[
-            SizedBox(width: 12),
+            const SizedBox(width: 12),
             Container(
               width: 32,
               height: 32,
               decoration: BoxDecoration(
-                color: Color(0xFF2A2A2A),
+                color: const Color(0xFF2A2A2A),
                 borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: Color(0xFF00FFFF).withOpacity(0.5)),
+                border: Border.all(color: Colors.white.withValues(alpha: 0.3)),
               ),
-              child: Icon(Icons.person, color: Color(0xFF00FFFF), size: 16),
+              child: const Icon(Icons.person, color: Colors.white, size: 16),
             ),
           ],
         ],
@@ -1534,265 +1507,498 @@ class MessageBubble extends StatelessWidget {
   }
 }
 
-// Settings Screen with Face Registration
-class SettingsScreen extends StatefulWidget {
+class SettingsScreen extends StatelessWidget {
   final User user;
 
   const SettingsScreen({Key? key, required this.user}) : super(key: key);
 
   @override
-  _SettingsScreenState createState() => _SettingsScreenState();
-}
-
-class _SettingsScreenState extends State<SettingsScreen> {
-  bool _faceRecognitionEnabled = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _faceRecognitionEnabled = widget.user.faceRecognitionEnabled;
-  }
-
-  void _showFaceRegistrationDialog() {
-    showDialog(
-      context: context,
-      builder: (context) => FaceRegistrationDialog(
-        user: widget.user,
-        onRegistrationComplete: () {
-          setState(() {
-            _faceRecognitionEnabled = true;
-          });
-        },
-      ),
-    );
-  }
-
-  @override
   Widget build(BuildContext context) {
-    return SingleChildScrollView(
-      padding: EdgeInsets.all(16),
+    return Center(
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Text(
-            'Settings',
-            style: TextStyle(color: Colors.white, fontSize: 28, fontWeight: FontWeight.bold),
-          ),
-          SizedBox(height: 24),
-          
-          // Face Recognition Section
           Container(
-            width: double.infinity,
-            padding: EdgeInsets.all(20),
+            padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
-              color: Color(0xFF1A1A1A),
-              borderRadius: BorderRadius.circular(15),
-              border: Border.all(color: Color(0xFF00FFFF).withOpacity(0.3)),
+              gradient: const LinearGradient(colors: [Color(0xFF4A148C), Color(0xFF6A1B9A)]),
+              borderRadius: BorderRadius.circular(16),
             ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Container(
-                      padding: EdgeInsets.all(8),
-                      decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          colors: [Color(0xFF00FFFF), Color(0xFF0080FF)],
-                        ),
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: Icon(Icons.face, color: Colors.white, size: 24),
-                    ),
-                    SizedBox(width: 16),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'Face Recognition',
-                            style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
-                          ),
-                          Text(
-                            'Login with your face for quick access',
-                            style: TextStyle(color: Colors.white70, fontSize: 14),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-                SizedBox(height: 16),
-                
-                if (_faceRecognitionEnabled) ...[
-                  Container(
-                    padding: EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: Color(0xFF00FF80).withOpacity(0.1),
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: Color(0xFF00FF80).withOpacity(0.3)),
-                    ),
-                    child: Row(
-                      children: [
-                        Icon(Icons.check_circle, color: Color(0xFF00FF80), size: 20),
-                        SizedBox(width: 8),
-                        Text(
-                          'Face recognition is enabled',
-                          style: TextStyle(color: Color(0xFF00FF80), fontWeight: FontWeight.w500),
-                        ),
-                      ],
-                    ),
-                  ),
-                  SizedBox(height: 12),
-                  SizedBox(
-                    width: double.infinity,
-                    child: OutlinedButton.icon(
-                      onPressed: _showFaceRegistrationDialog,
-                      style: OutlinedButton.styleFrom(
-                        side: BorderSide(color: Color(0xFF0080FF), width: 2),
-                        foregroundColor: Color(0xFF0080FF),
-                        padding: EdgeInsets.symmetric(vertical: 12),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                      ),
-                      icon: Icon(Icons.update),
-                      label: Text('Update Face Data'),
-                    ),
-                  ),
-                ] else ...[
-                  Container(
-                    padding: EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: Colors.orange.withOpacity(0.1),
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: Colors.orange.withOpacity(0.3)),
-                    ),
-                    child: Row(
-                      children: [
-                        Icon(Icons.warning, color: Colors.orange, size: 20),
-                        SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            'Set up face recognition for faster login',
-                            style: TextStyle(color: Colors.orange, fontWeight: FontWeight.w500),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  SizedBox(height: 12),
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton.icon(
-                      onPressed: _showFaceRegistrationDialog,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Color(0xFF00FFFF),
-                        foregroundColor: Colors.white,
-                        padding: EdgeInsets.symmetric(vertical: 12),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                        elevation: 0,
-                      ),
-                      icon: Icon(Icons.face),
-                      label: Text('Set Up Face Recognition'),
-                    ),
-                  ),
-                ],
-              ],
-            ),
+            child: const Icon(Icons.settings, size: 64, color: Colors.white),
           ),
-          
-          SizedBox(height: 20),
-          
-          // Account Settings
-          Container(
-            width: double.infinity,
-            padding: EdgeInsets.all(20),
-            decoration: BoxDecoration(
-              color: Color(0xFF1A1A1A),
-              borderRadius: BorderRadius.circular(15),
-              border: Border.all(color: Color(0xFF0080FF).withOpacity(0.3)),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Container(
-                      padding: EdgeInsets.all(8),
-                      decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          colors: [Color(0xFF0080FF), Color(0xFF8000FF)],
-                        ),
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: Icon(Icons.settings, color: Colors.white, size: 24),
-                    ),
-                    SizedBox(width: 16),
-                    Text(
-                      'Account Settings',
-                      style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
-                    ),
-                  ],
-                ),
-                SizedBox(height: 16),
-                
-                _buildSettingItem('Username', widget.user.username, Icons.person),
-                _buildSettingItem('Role', widget.user.role.toUpperCase(), Icons.security, color: widget.user.roleColor),
-                _buildSettingItem('Full Name', widget.user.fullName.isNotEmpty ? widget.user.fullName : 'Not set', Icons.badge),
-                _buildSettingItem('Account Status', widget.user.isActive ? 'Active' : 'Inactive', 
-                    widget.user.isActive ? Icons.check_circle : Icons.cancel,
-                    color: widget.user.isActive ? Color(0xFF00FF80) : Colors.red),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-  
-  Widget _buildSettingItem(String label, String value, IconData icon, {Color? color}) {
-    return Padding(
-      padding: EdgeInsets.only(bottom: 12),
-      child: Row(
-        children: [
-          Icon(icon, color: color ?? Colors.white.withOpacity(0.5), size: 20),
-          SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(label, style: TextStyle(color: Colors.white70, fontSize: 12)),
-                Text(value, style: TextStyle(color: color ?? Colors.white, fontSize: 14, fontWeight: FontWeight.w500)),
-              ],
-            ),
-          ),
+          const SizedBox(height: 24),
+          const Text('Settings', style: TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 16),
+          const Text('Settings features coming soon...', style: TextStyle(color: Colors.white70, fontSize: 16)),
         ],
       ),
     );
   }
 }
 
-// Face Registration Dialog
-class FaceRegistrationDialog extends StatefulWidget {
+class UserManagementScreen extends StatefulWidget {
   final User user;
-  final VoidCallback? onRegistrationComplete;
 
-  const FaceRegistrationDialog({Key? key, required this.user, this.onRegistrationComplete}) : super(key: key);
+  const UserManagementScreen({Key? key, required this.user}) : super(key: key);
 
   @override
-  _FaceRegistrationDialogState createState() => _FaceRegistrationDialogState();
+  _UserManagementScreenState createState() => _UserManagementScreenState();
 }
 
-class _FaceRegistrationDialogState extends State<FaceRegistrationDialog> {
-  CameraController? _cameraController;
-  bool _isCameraInitialized = false;
+class _UserManagementScreenState extends State<UserManagementScreen> {
+  List<User> _users = [];
   bool _isLoading = false;
   String? _errorMessage;
 
   @override
   void initState() {
     super.initState();
-    _initializeCamera();
+    _loadUsers();
   }
+
+  Future<void> _loadUsers() async {
+    setState(() {
+      _isLoading = true;
+      _errorMessage = null;
+    });
+    
+    try {
+      final response = await ApiService.getAllUsers();
+      
+      if (mounted) {
+        if (response['success'] == true) {
+          setState(() {
+            _users = (response['users'] as List)
+                .map((user) => User.fromJson(user))
+                .toList();
+            _isLoading = false;
+          });
+        } else {
+          setState(() {
+            _errorMessage = response['message'] ?? 'Failed to load users';
+            _isLoading = false;
+          });
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _errorMessage = 'Error loading users: $e';
+          _isLoading = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _showCreateUserDialog() async {
+    final usernameController = TextEditingController();
+    final passwordController = TextEditingController();
+    final fullNameController = TextEditingController();
+    final emailController = TextEditingController();
+    String selectedRole = 'visitor';
+    bool isCreating = false;
+    
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          backgroundColor: const Color(0xFF1A1A1A),
+          title: const Text('Create New User', style: TextStyle(color: Colors.white)),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: usernameController,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: const InputDecoration(
+                    labelText: 'Username',
+                    labelStyle: TextStyle(color: Colors.white70),
+                    enabledBorder: UnderlineInputBorder(
+                      borderSide: BorderSide(color: Colors.white54),
+                    ),
+                    focusedBorder: UnderlineInputBorder(
+                      borderSide: BorderSide(color: Colors.white),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                TextField(
+                  controller: passwordController,
+                  obscureText: true,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: const InputDecoration(
+                    labelText: 'Password',
+                    labelStyle: TextStyle(color: Colors.white70),
+                    enabledBorder: UnderlineInputBorder(
+                      borderSide: BorderSide(color: Colors.white54),
+                    ),
+                    focusedBorder: UnderlineInputBorder(
+                      borderSide: BorderSide(color: Colors.white),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                TextField(
+                  controller: fullNameController,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: const InputDecoration(
+                    labelText: 'Full Name',
+                    labelStyle: TextStyle(color: Colors.white70),
+                    enabledBorder: UnderlineInputBorder(
+                      borderSide: BorderSide(color: Colors.white54),
+                    ),
+                    focusedBorder: UnderlineInputBorder(
+                      borderSide: BorderSide(color: Colors.white),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                TextField(
+                  controller: emailController,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: const InputDecoration(
+                    labelText: 'Email',
+                    labelStyle: TextStyle(color: Colors.white70),
+                    enabledBorder: UnderlineInputBorder(
+                      borderSide: BorderSide(color: Colors.white54),
+                    ),
+                    focusedBorder: UnderlineInputBorder(
+                      borderSide: BorderSide(color: Colors.white),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                DropdownButtonFormField<String>(
+                  value: selectedRole,
+                  dropdownColor: const Color(0xFF1A1A1A),
+                  style: const TextStyle(color: Colors.white),
+                  decoration: const InputDecoration(
+                    labelText: 'Role',
+                    labelStyle: TextStyle(color: Colors.white70),
+                    enabledBorder: UnderlineInputBorder(
+                      borderSide: BorderSide(color: Colors.white54),
+                    ),
+                    focusedBorder: UnderlineInputBorder(
+                      borderSide: BorderSide(color: Colors.white),
+                    ),
+                  ),
+                  items: const [
+                    DropdownMenuItem(value: 'visitor', child: Text('Visitor', style: TextStyle(color: Colors.white))),
+                    DropdownMenuItem(value: 'viewer', child: Text('Viewer', style: TextStyle(color: Colors.white))),
+                    DropdownMenuItem(value: 'manager', child: Text('Manager', style: TextStyle(color: Colors.white))),
+                    DropdownMenuItem(value: 'admin', child: Text('Admin', style: TextStyle(color: Colors.white))),
+                  ],
+                  onChanged: (value) {
+                    if (value != null) {
+                      setDialogState(() {
+                        selectedRole = value;
+                      });
+                    }
+                  },
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: isCreating ? null : () => Navigator.pop(context, false),
+              child: const Text('Cancel', style: TextStyle(color: Colors.white70)),
+            ),
+            ElevatedButton(
+              onPressed: isCreating ? null : () async {
+                if (usernameController.text.trim().isNotEmpty &&
+                    passwordController.text.isNotEmpty &&
+                    fullNameController.text.trim().isNotEmpty &&
+                    emailController.text.trim().isNotEmpty) {
+                  setDialogState(() => isCreating = true);
+                  
+                  final response = await ApiService.createUser(
+                    username: usernameController.text.trim(),
+                    password: passwordController.text,
+                    fullName: fullNameController.text.trim(),
+                    email: emailController.text.trim(),
+                    role: selectedRole,
+                  );
+                  
+                  if (response['success'] == true) {
+                    Navigator.pop(context, true);
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('User created successfully'),
+                        backgroundColor: Colors.green,
+                      ),
+                    );
+                  } else {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(response['message'] ?? 'Failed to create user'),
+                        backgroundColor: Colors.red,
+                      ),
+                    );
+                  }
+                  setDialogState(() => isCreating = false);
+                } else {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Please fill all fields'),
+                      backgroundColor: Colors.red,
+                    ),
+                  );
+                }
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF4A148C),
+                foregroundColor: Colors.white,
+              ),
+              child: isCreating 
+                  ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                  : const Text('Create', style: TextStyle(color: Colors.white)),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (result == true) {
+      _loadUsers();
+    }
+  }
+
+  Future<void> _deleteUser(User user) async {
+    if (user.id == widget.user.id) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Cannot delete your own account'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    final shouldDelete = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1A1A1A),
+        title: const Text('Delete User', style: TextStyle(color: Colors.white)),
+        content: Text(
+          'Are you sure you want to delete user "${user.username}"? This action cannot be undone.',
+          style: const TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel', style: TextStyle(color: Colors.white70)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Delete', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+
+    if (shouldDelete == true) {
+      try {
+        final response = await ApiService.deleteUser(user.id);
+        
+        if (response['success'] == true) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('User deleted successfully'),
+              backgroundColor: Colors.green,
+            ),
+          );
+          _loadUsers();
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(response['message'] ?? 'Failed to delete user'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+      } catch (e) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error deleting user: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: _isLoading
+          ? const Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  CircularProgressIndicator(color: Colors.white),
+                  SizedBox(height: 16),
+                  Text('Loading users...', style: TextStyle(color: Colors.white70)),
+                ],
+              ),
+            )
+          : _errorMessage != null
+              ? Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const Icon(Icons.error, color: Colors.red, size: 48),
+                      const SizedBox(height: 16),
+                      Text(_errorMessage!, style: const TextStyle(color: Colors.red, fontSize: 16), textAlign: TextAlign.center),
+                      const SizedBox(height: 16),
+                      ElevatedButton(
+                        onPressed: _loadUsers,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF4A148C),
+                          foregroundColor: Colors.white,
+                        ),
+                        child: const Text('Retry', style: TextStyle(color: Colors.white)),
+                      ),
+                    ],
+                  ),
+                )
+              : Column(
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          const Text('User Management', style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold)),
+                          Row(
+                            children: [
+                              IconButton(
+                                onPressed: _loadUsers,
+                                icon: const Icon(Icons.refresh, color: Colors.white),
+                              ),
+                              const SizedBox(width: 8),
+                              ElevatedButton.icon(
+                                onPressed: _showCreateUserDialog,
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: const Color(0xFF4A148C),
+                                  foregroundColor: Colors.white,
+                                ),
+                                icon: const Icon(Icons.add, color: Colors.white),
+                                label: const Text('Add User', style: TextStyle(color: Colors.white)),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                    Expanded(
+                      child: _users.isEmpty
+                          ? const Center(
+                              child: Text('No users found', style: TextStyle(color: Colors.white70, fontSize: 16)),
+                            )
+                          : ListView.builder(
+                              padding: const EdgeInsets.symmetric(horizontal: 16),
+                              itemCount: _users.length,
+                              itemBuilder: (context, index) {
+                                final user = _users[index];
+                                return Container(
+                                  margin: const EdgeInsets.only(bottom: 12),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFF1A1A1A),
+                                    borderRadius: BorderRadius.circular(12),
+                                    border: Border.all(color: Colors.white.withValues(alpha: 0.2)),
+                                  ),
+                                  child: ListTile(
+                                    leading: Container(
+                                      width: 48,
+                                      height: 48,
+                                      decoration: BoxDecoration(
+                                        gradient: LinearGradient(colors: [user.roleColor, user.roleColor.withValues(alpha: 0.7)]),
+                                        borderRadius: BorderRadius.circular(24),
+                                      ),
+                                      child: Icon(
+                                        user.faceRecognitionEnabled ? Icons.face : Icons.person,
+                                        color: Colors.white,
+                                        size: 24,
+                                      ),
+                                    ),
+                                    title: Text(user.username, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                                    subtitle: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Text(user.fullName, style: const TextStyle(color: Colors.white70)),
+                                        const SizedBox(height: 4),
+                                        Row(
+                                          children: [
+                                            Container(
+                                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                                              decoration: BoxDecoration(
+                                                color: user.roleColor.withValues(alpha: 0.2),
+                                                borderRadius: BorderRadius.circular(12),
+                                                border: Border.all(color: user.roleColor.withValues(alpha: 0.5)),
+                                              ),
+                                              child: Text(
+                                                user.role.toUpperCase(),
+                                                style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
+                                              ),
+                                            ),
+                                            const SizedBox(width: 8),
+                                            if (user.faceRecognitionEnabled)
+                                              Container(
+                                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                                decoration: BoxDecoration(
+                                                  color: Colors.green.withValues(alpha: 0.2),
+                                                  borderRadius: BorderRadius.circular(8),
+                                                  border: Border.all(color: Colors.green.withValues(alpha: 0.5)),
+                                                ),
+                                                child: const Text(
+                                                  'FACE',
+                                                  style: TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.bold),
+                                                ),
+                                              ),
+                                          ],
+                                        ),
+                                      ],
+                                    ),
+                                    trailing: user.id != widget.user.id
+                                        ? IconButton(
+                                            onPressed: () => _deleteUser(user),
+                                            icon: const Icon(Icons.delete, color: Colors.red),
+                                          )
+                                        : const Icon(Icons.person, color: Colors.white54),
+                                  ),
+                                );
+                              },
+                            ),
+                    ),
+                  ],
+                ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: _showCreateUserDialog,
+        backgroundColor: const Color(0xFF4A148C),
+        foregroundColor: Colors.white,
+        child: const Icon(Icons.add, color: Colors.white),
+      ),
+    );
+  }
+}
+
+class ProfileScreen extends StatefulWidget {
+  final User user;
+
+  const ProfileScreen({Key? key, required this.user}) : super(key: key);
+
+  @override
+  _ProfileScreenState createState() => _ProfileScreenState();
+}
+
+class _ProfileScreenState extends State<ProfileScreen> {
+  CameraController? _cameraController;
+  bool _isCameraInitialized = false;
+  bool _showCamera = false;
+  bool _isRegistering = false;
+  String? _errorMessage;
 
   @override
   void dispose() {
@@ -1804,13 +2010,13 @@ class _FaceRegistrationDialogState extends State<FaceRegistrationDialog> {
     try {
       final status = await Permission.camera.request();
       if (status != PermissionStatus.granted) {
-        setState(() => _errorMessage = 'Camera permission required');
+        if (mounted) setState(() => _errorMessage = 'Camera permission is required for face registration');
         return;
       }
 
       final cameras = await availableCameras();
       if (cameras.isEmpty) {
-        setState(() => _errorMessage = 'No cameras available');
+        if (mounted) setState(() => _errorMessage = 'No cameras available on this device');
         return;
       }
 
@@ -1820,18 +2026,16 @@ class _FaceRegistrationDialogState extends State<FaceRegistrationDialog> {
       );
 
       _cameraController = CameraController(
-        camera, 
-        ResolutionPreset.high, 
+        camera,
+        ResolutionPreset.ultraHigh,
         enableAudio: false,
-        imageFormatGroup: ImageFormatGroup.jpeg,
+        imageFormatGroup: ImageFormatGroup.jpeg
       );
       await _cameraController!.initialize();
-      
-      if (mounted) {
-        setState(() => _isCameraInitialized = true);
-      }
+
+      if (mounted) setState(() => _isCameraInitialized = true);
     } catch (e) {
-      setState(() => _errorMessage = 'Failed to initialize camera: $e');
+      if (mounted) setState(() => _errorMessage = 'Failed to initialize camera: $e');
     }
   }
 
@@ -1839,7 +2043,7 @@ class _FaceRegistrationDialogState extends State<FaceRegistrationDialog> {
     if (_cameraController == null || !_cameraController!.value.isInitialized) return;
 
     setState(() {
-      _isLoading = true;
+      _isRegistering = true;
       _errorMessage = null;
     });
 
@@ -1850,317 +2054,309 @@ class _FaceRegistrationDialogState extends State<FaceRegistrationDialog> {
 
       final result = await ApiService.registerFace(base64Image);
 
-      if (result['success'] == true) {
-        Navigator.pop(context);
-        if (widget.onRegistrationComplete != null) {
-          widget.onRegistrationComplete!();
+      if (mounted) {
+        if (result['success'] == true) {
+          setState(() {
+            _showCamera = false;
+            _isRegistering = false;
+          });
+          _cameraController?.dispose();
+          _cameraController = null;
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Face registered successfully!'),
+              backgroundColor: Colors.green,
+            ),
+          );
+        } else {
+          setState(() {
+            _errorMessage = result['message'] ?? 'Face registration failed';
+            _isRegistering = false;
+          });
         }
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Face registration successful!'),
-            backgroundColor: Color(0xFF00FF80),
-          ),
-        );
-      } else {
-        setState(() {
-          _errorMessage = result['message'] ?? 'Face registration failed';
-          _isLoading = false;
-        });
       }
     } catch (e) {
-      setState(() {
-        _errorMessage = 'Face registration failed: $e';
-        _isLoading = false;
-      });
+      if (mounted) {
+        setState(() {
+          _errorMessage = 'Registration failed: $e';
+          _isRegistering = false;
+        });
+      }
     }
   }
 
-  @override
+  Future<void> _startFaceRegistration() async {
+    setState(() {
+      _showCamera = true;
+      _errorMessage = null;
+    });
+    await _initializeCamera();
+  }
+
+  void _cancelFaceRegistration() {
+    setState(() => _showCamera = false);
+    _cameraController?.dispose();
+    _cameraController = null;
+  }
+
+@override
   Widget build(BuildContext context) {
-    return Dialog(
-      backgroundColor: Color(0xFF000000),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-      child: Container(
-        padding: EdgeInsets.all(24),
-        constraints: BoxConstraints(maxHeight: 600),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(
-                  'Set Up Face Recognition',
-                  style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold),
-                ),
-                IconButton(
-                  onPressed: () => Navigator.pop(context),
-                  icon: Icon(Icons.close, color: Colors.white70),
-                ),
+    if (_showCamera) {
+      return Scaffold(
+        appBar: AppBar(
+          backgroundColor: Colors.transparent,
+          elevation: 0,
+          title: const Text('Register Face', style: TextStyle(color: Colors.white)),
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back, color: Colors.white),
+            onPressed: _cancelFaceRegistration,
+          ),
+        ),
+        body: Container(
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [
+                Color(0xFF000000),
+                Color(0xFF2E0249),
+                Color(0xFF4A148C),
+                Color(0xFF6A1B9A),
               ],
             ),
-            SizedBox(height: 16),
-            
-            if (!_isCameraInitialized) ...[
-              Container(
-                padding: EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: [Color(0xFF00FFFF), Color(0xFF0080FF)],
-                  ),
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                child: Icon(Icons.face, size: 48, color: Colors.white),
-              ),
-              SizedBox(height: 16),
-              Text('Initializing Camera...', style: TextStyle(color: Colors.white, fontSize: 16)),
-              SizedBox(height: 16),
-              CircularProgressIndicator(
-                valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF00FFFF)),
-              ),
-            ] else ...[
-              Container(
-                width: 240,
-                height: 300,
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(15),
-                  border: Border.all(color: Color(0xFF00FFFF), width: 2),
-                ),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(13),
-                  child: AspectRatio(
-                    aspectRatio: 3/4, // Fixed aspect ratio for portrait
-                    child: CameraPreview(_cameraController!),
-                  ),
-                ),
-              ),
-              SizedBox(height: 16),
-              Text(
-                'Position your face in the frame',
-                style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
-              ),
-              SizedBox(height: 8),
-              Text(
-                'Make sure your face is well-lit and clearly visible',
-                style: TextStyle(color: Colors.white70, fontSize: 14),
-                textAlign: TextAlign.center,
-              ),
-            ],
-            
-            SizedBox(height: 20),
-            
-            if (_errorMessage != null)
-              Container(
-                padding: EdgeInsets.all(12),
-                margin: EdgeInsets.only(bottom: 16),
-                decoration: BoxDecoration(
-                  color: Colors.red.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: Colors.red.withOpacity(0.3)),
-                ),
-                child: Row(
+          ),
+          child: SafeArea(
+            child: SingleChildScrollView(
+              child: Padding(
+                padding: const EdgeInsets.all(24.0),
+                child: Column(
                   children: [
-                    Icon(Icons.error, color: Colors.red, size: 20),
-                    SizedBox(width: 8),
-                    Expanded(child: Text(_errorMessage!, style: TextStyle(color: Colors.red))),
+                    if (!_isCameraInitialized) ...[
+                      const SizedBox(height: 50),
+                      Container(
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          gradient: const LinearGradient(colors: [Color(0xFF4A148C), Color(0xFF6A1B9A)]),
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        child: const Icon(Icons.face, size: 48, color: Colors.white),
+                      ),
+                      const SizedBox(height: 32),
+                      const Text('Initializing Camera...', style: TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold)),
+                      const SizedBox(height: 16),
+                      const CircularProgressIndicator(valueColor: AlwaysStoppedAnimation<Color>(Colors.white)),
+                    ] else ...[
+                      const SizedBox(height: 20),
+                      Container(
+                        width: MediaQuery.of(context).size.width * 0.8,
+                        height: (MediaQuery.of(context).size.width * 0.8) * (4/3),
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(color: Colors.white, width: 3),
+                        ),
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(17),
+                          child: CameraPreview(_cameraController!),
+                        ),
+                      ),
+                      const SizedBox(height: 24),
+                      const Text('Position your face in the frame', style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold)),
+                      const SizedBox(height: 8),
+                      const Text('Make sure your face is well-lit and clearly visible', style: TextStyle(color: Colors.white70, fontSize: 16), textAlign: TextAlign.center),
+                    ],
+
+                    const SizedBox(height: 30),
+
+                    if (_errorMessage != null)
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        margin: const EdgeInsets.only(bottom: 16),
+                        decoration: BoxDecoration(
+                          color: Colors.red.withValues(alpha: 0.1),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: Colors.red.withValues(alpha: 0.3)),
+                        ),
+                        child: Row(
+                          children: [
+                            const Icon(Icons.error, color: Colors.red, size: 20),
+                            const SizedBox(width: 8),
+                            Expanded(child: Text(_errorMessage!, style: const TextStyle(color: Colors.red))),
+                          ],
+                        ),
+                      ),
+
+                    if (_isCameraInitialized)
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton.icon(
+                          onPressed: _isRegistering ? null : _registerFace,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF4A148C),
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(vertical: 16),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+                            elevation: 0,
+                          ),
+                          icon: _isRegistering
+                              ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                              : const Icon(Icons.camera_alt, color: Colors.white),
+                          label: Text(
+                            _isRegistering ? 'Registering...' : 'Register Face',
+                            style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+                          ),
+                        ),
+                      ),
+                    const SizedBox(height: 20),
                   ],
                 ),
               ),
-            
-            if (_isCameraInitialized) ...[
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton.icon(
-                  onPressed: _isLoading ? null : _registerFace,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Color(0xFF00FFFF),
-                    foregroundColor: Colors.white,
-                    padding: EdgeInsets.symmetric(vertical: 12),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                    elevation: 0,
+            ),
+          ),
+        ),
+      );
+    }
+
+return SingleChildScrollView(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Center(
+              child: Column(
+                children: [
+                  Container(
+                    width: 100,
+                    height: 100,
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(colors: [widget.user.roleColor, widget.user.roleColor.withValues(alpha: 0.7)]),
+                      borderRadius: BorderRadius.circular(50),
+                    ),
+                    child: Icon(
+                      widget.user.faceRecognitionEnabled ? Icons.face : Icons.person,
+                      color: Colors.white,
+                      size: 48,
+                    ),
                   ),
-                  icon: _isLoading
-                      ? SizedBox(
-                          height: 20,
-                          width: 20,
-                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                        )
-                      : Icon(Icons.camera_alt),
-                  label: Text(_isLoading ? 'Registering...' : 'Register Face'),
-                ),
+                  const SizedBox(height: 16),
+                  Text(widget.user.username, style: const TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold)),
+                  Text(widget.user.fullName, style: const TextStyle(color: Colors.white70, fontSize: 16)),
+                  const SizedBox(height: 8),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: widget.user.roleColor.withValues(alpha: 0.2),
+                      borderRadius: BorderRadius.circular(15),
+                      border: Border.all(color: widget.user.roleColor.withValues(alpha: 0.5)),
+                    ),
+                    child: Text(
+                      widget.user.role.toUpperCase(),
+                      style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                ],
               ),
-              SizedBox(height: 8),
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: Text('Cancel', style: TextStyle(color: Colors.white70)),
+            ),
+            
+            const SizedBox(height: 40),
+            
+            const Text('Profile Information', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 16),
+            
+            _buildInfoCard('User ID', widget.user.id.toString(), Icons.tag),
+            _buildInfoCard('Email', widget.user.email.isNotEmpty ? widget.user.email : 'Not provided', Icons.email),
+            _buildInfoCard('Account Status', widget.user.isActive ? 'Active' : 'Inactive', Icons.verified),
+            _buildInfoCard('Created', '${widget.user.createdAt.day}/${widget.user.createdAt.month}/${widget.user.createdAt.year}', Icons.calendar_today),
+            
+            const SizedBox(height: 32),
+            
+            const Text('Face Authentication', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 16),
+            
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: const Color(0xFF1A1A1A),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.white.withValues(alpha: 0.2)),
               ),
-            ],
+              child: Column(
+                children: [
+                  Row(
+                    children: [
+                      Icon(
+                        widget.user.faceRecognitionEnabled ? Icons.face : Icons.face_retouching_off,
+                        color: widget.user.faceRecognitionEnabled ? Colors.green : Colors.white54,
+                        size: 32,
+                      ),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              widget.user.faceRecognitionEnabled ? 'Face Authentication Enabled' : 'Face Authentication Disabled',
+                              style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+                            ),
+                            Text(
+                              widget.user.faceRecognitionEnabled 
+                                  ? 'You can login using face recognition'
+                                  : 'Register your face to enable face login',
+                              style: const TextStyle(color: Colors.white70, fontSize: 14),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      onPressed: _startFaceRegistration,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF4A148C),
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                      ),
+                      icon: const Icon(Icons.camera_alt, color: Colors.white),
+                      label: Text(
+                        widget.user.faceRecognitionEnabled ? 'Update Face Registration' : 'Register Face',
+                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 30),
           ],
         ),
       ),
     );
   }
-}
 
-// Simple User Management Screen
-class UserManagementScreen extends StatelessWidget {
-  final User user;
-
-  const UserManagementScreen({Key? key, required this.user}) : super(key: key);
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Container(
-            padding: EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                colors: [Color(0xFF00FFFF), Color(0xFF0080FF)],
-              ),
-              borderRadius: BorderRadius.circular(16),
-            ),
-            child: Icon(Icons.people, size: 64, color: Colors.white),
-          ),
-          SizedBox(height: 24),
-          Text(
-            'User Management',
-            style: TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold),
-          ),
-          SizedBox(height: 16),
-          Text(
-            'Admin features coming soon...',
-            style: TextStyle(color: Colors.white70, fontSize: 16),
-          ),
-        ],
+  Widget _buildInfoCard(String title, String value, IconData icon) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1A1A1A),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.2)),
       ),
-    );
-  }
-}
-
-// Profile Screen
-class ProfileScreen extends StatelessWidget {
-  final User user;
-
-  const ProfileScreen({Key? key, required this.user}) : super(key: key);
-
-  @override
-  Widget build(BuildContext context) {
-    return SingleChildScrollView(
-      padding: EdgeInsets.all(16),
-      child: Column(
-        children: [
-          Container(
-            width: double.infinity,
-            padding: EdgeInsets.all(24),
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                colors: [user.roleColor.withOpacity(0.3), user.roleColor.withOpacity(0.1)],
-              ),
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: user.roleColor.withOpacity(0.5)),
-            ),
-            child: Column(
-              children: [
-                Container(
-                  width: 80,
-                  height: 80,
-                  decoration: BoxDecoration(
-                    color: user.roleColor.withOpacity(0.2),
-                    borderRadius: BorderRadius.circular(40),
-                    border: Border.all(color: user.roleColor, width: 3),
-                  ),
-                  child: Icon(
-                    user.faceRecognitionEnabled ? Icons.face : Icons.person,
-                    size: 40,
-                    color: user.roleColor,
-                  ),
-                ),
-                SizedBox(height: 16),
-                Text(
-                  user.fullName.isNotEmpty ? user.fullName : user.username,
-                  style: TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold),
-                ),
-                Text('@${user.username}', style: TextStyle(color: Colors.white70, fontSize: 16)),
-                SizedBox(height: 12),
-                Container(
-                  padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                  decoration: BoxDecoration(
-                    color: user.roleColor.withOpacity(0.2),
-                    borderRadius: BorderRadius.circular(20),
-                    border: Border.all(color: user.roleColor.withOpacity(0.5)),
-                  ),
-                  child: Text(
-                    user.role.toUpperCase(),
-                    style: TextStyle(color: user.roleColor, fontSize: 14, fontWeight: FontWeight.bold),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          
-          SizedBox(height: 24),
-          
-          Container(
-            width: double.infinity,
-            padding: EdgeInsets.all(20),
-            decoration: BoxDecoration(
-              color: Color(0xFF1A1A1A),
-              borderRadius: BorderRadius.circular(15),
-              border: Border.all(color: Color(0xFF00FFFF).withOpacity(0.3)),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('Account Information', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
-                SizedBox(height: 16),
-                
-                if (user.email.isNotEmpty)
-                  _buildInfoRow('Email', user.email, Icons.email),
-                
-                _buildInfoRow(
-                  'Account Created',
-                  '${user.createdAt.day}/${user.createdAt.month}/${user.createdAt.year}',
-                  Icons.calendar_today,
-                ),
-                
-                _buildInfoRow(
-                  'Account Status',
-                  user.isActive ? 'Active' : 'Inactive',
-                  user.isActive ? Icons.check_circle : Icons.cancel,
-                  color: user.isActive ? Color(0xFF00FF80) : Colors.red,
-                ),
-                
-                _buildInfoRow(
-                  'Authentication Method',
-                  user.faceRecognitionEnabled ? 'Facial Recognition' : 'Username & Password',
-                  user.faceRecognitionEnabled ? Icons.face : Icons.password,
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-  
-  Widget _buildInfoRow(String label, String value, IconData icon, {Color? color}) {
-    return Padding(
-      padding: EdgeInsets.only(bottom: 12),
       child: Row(
         children: [
-          Icon(icon, color: color ?? Colors.white.withOpacity(0.5), size: 20),
-          SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(label, style: TextStyle(color: Colors.white70, fontSize: 12)),
-                Text(value, style: TextStyle(color: color ?? Colors.white, fontSize: 14, fontWeight: FontWeight.w500)),
-              ],
-            ),
+          Icon(icon, color: Colors.white70, size: 20),
+          const SizedBox(width: 16),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(title, style: const TextStyle(color: Colors.white54, fontSize: 12)),
+              const SizedBox(height: 2),
+              Text(value, style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w500)),
+            ],
           ),
         ],
       ),
