@@ -507,6 +507,10 @@ def facial_authenticate():
             'success': False,
             'message': f'Authentication failed: {str(e)}'
         }), 500
+    
+@app.route('/facial-auth/test', methods=['POST', 'GET'])
+def test_facial_auth():
+    return jsonify({"success": True, "message": "Facial auth routes are working"})
 
 @app.route('/facial-auth/create-admin', methods=['POST'])
 def create_facial_admin():
