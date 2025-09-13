@@ -508,64 +508,33 @@ def face_auth_enroll():
 @app.route('/invoices', methods=['GET'])
 @require_auth
 def get_invoices(user):
-    """Get invoices based on user permissions"""
     try:
-        user_id = request.args.get('user_id', type=int)
-        
-        # Role-based access control
-        if user['role'] == 'visitor':
-            # Visitors can only see their own invoices if user_id matches
-            if not user_id or user_id != user['user_id']:
-                return jsonify({
-                    'success': False,
-                    'message': 'Visitors can only view their own invoices'
-                }), 403
-                
         with db_assistant.get_db_connection() as conn:
             cursor = conn.cursor()
-            
-            if user['role'] == 'visitor' and user_id:
-                # Get invoices for specific user (visitor accessing own)
-                cursor.execute("""
-                    SELECT invoice_id, customer_id, invoice_date, total_amount, status
-                    FROM invoices 
-                    WHERE customer_id = %s 
-                    ORDER BY invoice_date DESC 
-                    LIMIT 50
-                """, (user_id,))
-            else:
-                # Get all invoices (for viewer, manager, admin)
-                cursor.execute("""
-                    SELECT invoice_id, customer_id, invoice_date, total_amount, status
-                    FROM invoices 
-                    ORDER BY invoice_date DESC 
-                    LIMIT 100
-                """)
+            cursor.execute("""
+                SELECT invoice_id, customer_id, invoice_date, total_amount, status
+                FROM invoices 
+                ORDER BY invoice_date DESC 
+                LIMIT 100
+            """)
             
             invoices = []
             for row in cursor.fetchall():
                 invoices.append({
-                    'invoice_id': row[0],
-                    'customer_id': row[1],
+                    'invoice_id': row[0] or 0,
+                    'customer_id': row[1] or 0,
                     'invoice_date': row[2].isoformat() if row[2] else None,
-                    'total_amount': float(row[3]) if row[3] else 0.0,
+                    'total_amount': float(row[3] or 0),  # Handle null values
                     'status': row[4] or 'pending'
                 })
             
             return jsonify({
                 'success': True,
                 'invoices': invoices,
-                'count': len(invoices),
-                'user_role': user['role']
+                'count': len(invoices)
             })
-            
     except Exception as e:
-        logger.error(f"Error getting invoices: {e}")
-        return jsonify({
-            'success': False,
-            'message': 'Failed to get invoices'
-        }), 500
-
+        return jsonify({'success': False, 'message': str(e)}), 500
 
 @app.route('/setup-admin', methods=['POST'])
 def setup_initial_admin():
