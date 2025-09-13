@@ -8,6 +8,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'dart:io';
 import 'dart:typed_data';
+import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -87,7 +88,7 @@ class User {
   }
 
   bool get canManageUsers => role == 'admin';
-  bool get canUploadReceipts => ['manager', 'admin'].contains(role);
+  bool get canCreateInvoices => ['manager', 'admin'].contains(role);
   
   Color get roleColor {
     switch (role) {
@@ -116,48 +117,56 @@ class Message {
   });
 }
 
-class Receipt {
+class Invoice {
   final int? id;
-  final String vendor;
+  final String customerName;
   final double amount;
   final DateTime date;
+  final DateTime? dueDate;
   final String? description;
   final String? imagePath;
   final int userId;
-  final DateTime uploadedAt;
+  final DateTime createdAt;
+  final String status;
 
-  Receipt({
+  Invoice({
     this.id,
-    required this.vendor,
+    required this.customerName,
     required this.amount,
     required this.date,
+    this.dueDate,
     this.description,
     this.imagePath,
     required this.userId,
-    required this.uploadedAt,
+    required this.createdAt,
+    this.status = 'pending',
   });
 
-  factory Receipt.fromJson(Map<String, dynamic> json) {
-    return Receipt(
+  factory Invoice.fromJson(Map<String, dynamic> json) {
+    return Invoice(
       id: json['id'],
-      vendor: json['vendor'],
+      customerName: json['customer_name'] ?? json['vendor'] ?? '',
       amount: (json['amount'] as num).toDouble(),
       date: DateTime.parse(json['date']),
+      dueDate: json['due_date'] != null ? DateTime.parse(json['due_date']) : null,
       description: json['description'],
       imagePath: json['image_path'],
       userId: json['user_id'],
-      uploadedAt: DateTime.parse(json['uploaded_at']),
+      createdAt: json['created_at'] != null ? DateTime.parse(json['created_at']) : DateTime.now(),
+      status: json['status'] ?? 'pending',
     );
   }
 
   Map<String, dynamic> toJson() {
     return {
-      'vendor': vendor,
+      'customer_name': customerName,
       'amount': amount,
       'date': date.toIso8601String(),
+      'due_date': dueDate?.toIso8601String(),
       'description': description,
       'image_base64': imagePath,
       'user_id': userId,
+      'status': status,
     };
   }
 }
@@ -226,20 +235,35 @@ class CameraService {
 }
 
 class FaceAuthService {
-  static const String _awsAccessKey = 'YOUR_AWS_ACCESS_KEY'; // Replace with your AWS credentials
-  static const String _awsSecretKey = 'YOUR_AWS_SECRET_KEY';
-  static const String _awsRegion = 'us-east-1';
-  static const String _collectionId = 'neural-pulse-faces';
+  static final FaceDetector _faceDetector = FaceDetector(
+    options: FaceDetectorOptions(
+      enableContours: true,
+      enableLandmarks: true,
+      enableClassification: true,
+      enableTracking: true,
+    ),
+  );
 
-  // Note: In production, use AWS SDK with proper credential management
   static Future<Map<String, dynamic>> enrollFace(File imageFile, String userId) async {
     try {
-      final imageBase64 = await CameraService.convertToBase64(imageFile);
+      final inputImage = InputImage.fromFile(imageFile);
+      final List<Face> faces = await _faceDetector.processImage(inputImage);
       
-      // This would integrate with AWS Rekognition API
-      // For now, returning mock response - you'll need to implement AWS SDK integration
+      if (faces.isEmpty) {
+        return {'success': false, 'message': 'No face detected in image'};
+      }
       
-      final response = await ApiService.enrollFaceWithServer(imageBase64, userId);
+      if (faces.length > 1) {
+        return {'success': false, 'message': 'Multiple faces detected. Please use image with single face'};
+      }
+      
+      final face = faces.first;
+      
+      // Extract face features/embeddings (you'll need to implement this)
+      final faceData = _extractFaceFeatures(face, imageFile);
+      
+      // Store in your backend
+      final response = await ApiService.enrollFaceWithServer(faceData, userId);
       return response;
       
     } catch (e) {
@@ -249,9 +273,21 @@ class FaceAuthService {
 
   static Future<Map<String, dynamic>> verifyFace(File imageFile) async {
     try {
-      final imageBase64 = await CameraService.convertToBase64(imageFile);
+      final inputImage = InputImage.fromFile(imageFile);
+      final List<Face> faces = await _faceDetector.processImage(inputImage);
       
-      final response = await ApiService.verifyFaceWithServer(imageBase64);
+      if (faces.isEmpty) {
+        return {'success': false, 'message': 'No face detected'};
+      }
+      
+      if (faces.length > 1) {
+        return {'success': false, 'message': 'Multiple faces detected'};
+      }
+      
+      final face = faces.first;
+      final faceData = _extractFaceFeatures(face, imageFile);
+      
+      final response = await ApiService.verifyFaceWithServer(faceData);
       return response;
       
     } catch (e) {
@@ -259,194 +295,42 @@ class FaceAuthService {
     }
   }
 
+  static String _extractFaceFeatures(Face face, File imageFile) {
+    // Convert face landmarks/contours to feature vector
+    // This is a simplified example - you'd need proper feature extraction
+    final landmarks = face.landmarks;
+    final contours = face.contours;
+    
+    Map<String, dynamic> features = {
+      'bounding_box': {
+        'left': face.boundingBox.left,
+        'top': face.boundingBox.top,
+        'width': face.boundingBox.width,
+        'height': face.boundingBox.height,
+      },
+      'head_euler_angle_x': face.headEulerAngleX,
+      'head_euler_angle_y': face.headEulerAngleY,
+      'head_euler_angle_z': face.headEulerAngleZ,
+      'left_eye_open_probability': face.leftEyeOpenProbability,
+      'right_eye_open_probability': face.rightEyeOpenProbability,
+      'smiling_probability': face.smilingProbability,
+      'tracking_id': face.trackingId,
+    };
+    
+    // Add landmarks if available
+    if (landmarks.isNotEmpty) {
+      features['landmarks'] = landmarks.map((type, landmark) => 
+        MapEntry(type.toString(), {
+          'x': landmark?.position.x,
+          'y': landmark?.position.y,
+        }));
+    }
+    
+    return json.encode(features);
+  }
+
   static Future<File?> captureFaceImage() async {
     return await CameraService.captureImage();
-  }
-}
-
-class BiometricAuthService {
-  static final LocalAuthentication _localAuth = LocalAuthentication();
-  static const FlutterSecureStorage _secureStorage = FlutterSecureStorage(
-    aOptions: AndroidOptions(
-      encryptedSharedPreferences: true,
-    ),
-    iOptions: IOSOptions(
-      accessibility: KeychainAccessibility.first_unlock_this_device,
-    ),
-  );
-
-  static Future<bool> isBiometricAvailable() async {
-    try {
-      final bool isAvailable = await _localAuth.canCheckBiometrics;
-      final bool isDeviceSupported = await _localAuth.isDeviceSupported();
-      return isAvailable && isDeviceSupported;
-    } catch (e) {
-      return false;
-    }
-  }
-
-  static Future<List<BiometricType>> getAvailableBiometrics() async {
-    try {
-      return await _localAuth.getAvailableBiometrics();
-    } catch (e) {
-      return [];
-    }
-  }
-
-  static Future<bool> authenticate() async {
-    try {
-      final bool isAvailable = await isBiometricAvailable();
-      if (!isAvailable) return false;
-
-      final bool didAuthenticate = await _localAuth.authenticate(
-        localizedReason: 'Please authenticate to access your account',
-        options: const AuthenticationOptions(
-          biometricOnly: false,
-          stickyAuth: true,
-        ),
-      );
-
-      return didAuthenticate;
-    } catch (e) {
-      return false;
-    }
-  }
-
-  static Future<bool> storeUserCredentials(User user) async {
-    try {
-      final userJson = json.encode({
-        'user_id': user.id,
-        'username': user.username,
-        'role': user.role,
-        'full_name': user.fullName,
-        'email': user.email,
-        'is_active': user.isActive,
-        'created_at': user.createdAt.toIso8601String(),
-        'biometric_enabled': true,
-        'face_auth_enabled': user.faceAuthEnabled,
-      });
-      
-      await _secureStorage.write(key: 'user_credentials', value: userJson);
-      await _secureStorage.write(key: 'biometric_enabled', value: 'true');
-      return true;
-    } catch (e) {
-      return false;
-    }
-  }
-
-  static Future<bool> isBiometricLoginEnabled() async {
-    try {
-      final biometricEnabled = await _secureStorage.read(key: 'biometric_enabled');
-      final userCredentials = await _secureStorage.read(key: 'user_credentials');
-      return biometricEnabled == 'true' && userCredentials != null;
-    } catch (e) {
-      return false;
-    }
-  }
-
-  static Future<User?> getStoredUserCredentials() async {
-    try {
-      final userJson = await _secureStorage.read(key: 'user_credentials');
-      if (userJson != null) {
-        final userData = json.decode(userJson);
-        return User.fromJson(userData);
-      }
-      return null;
-    } catch (e) {
-      return null;
-    }
-  }
-
-  static Future<LoginResult> loginWithBiometric() async {
-    try {
-      final isEnabled = await isBiometricLoginEnabled();
-      if (!isEnabled) {
-        return LoginResult.error('Biometric login not set up. Please login with username/password first.');
-      }
-
-      final authenticated = await authenticate();
-      if (authenticated) {
-        final user = await getStoredUserCredentials();
-        if (user != null) {
-          return LoginResult.success(user);
-        } else {
-          return LoginResult.error('Stored credentials not found. Please login with username/password.');
-        }
-      } else {
-        return LoginResult.error('Biometric authentication failed or cancelled');
-      }
-    } catch (e) {
-      return LoginResult.error('Biometric login error: ${e.toString()}');
-    }
-  }
-
-  static Future<bool> enableBiometricLogin(User user) async {
-    try {
-      final authenticated = await authenticate();
-      if (authenticated) {
-        return await storeUserCredentials(user);
-      }
-      return false;
-    } catch (e) {
-      return false;
-    }
-  }
-
-  static Future<bool> disableBiometricLogin() async {
-    try {
-      await _secureStorage.delete(key: 'user_credentials');
-      await _secureStorage.delete(key: 'biometric_enabled');
-      return true;
-    } catch (e) {
-      return false;
-    }
-  }
-
-  static Future<void> clearStoredData() async {
-    try {
-      await _secureStorage.deleteAll();
-    } catch (e) {
-      // Ignore errors during cleanup
-    }
-  }
-
-  static Future<String> getBiometricCapabilitiesDescription() async {
-    try {
-      final isAvailable = await isBiometricAvailable();
-      if (!isAvailable) {
-        return 'Biometric authentication not available on this device';
-      }
-
-      final biometrics = await getAvailableBiometrics();
-      if (biometrics.isEmpty) {
-        return 'No biometric methods set up. Please configure in device settings.';
-      }
-
-      List<String> availableTypes = [];
-      if (biometrics.contains(BiometricType.fingerprint)) {
-        availableTypes.add('Fingerprint');
-      }
-      if (biometrics.contains(BiometricType.face)) {
-        availableTypes.add('Face recognition');
-      }
-      if (biometrics.contains(BiometricType.iris)) {
-        availableTypes.add('Iris scan');
-      }
-      if (biometrics.contains(BiometricType.strong)) {
-        availableTypes.add('Strong biometrics');
-      }
-      if (biometrics.contains(BiometricType.weak)) {
-        availableTypes.add('Device authentication');
-      }
-
-      if (availableTypes.isNotEmpty) {
-        return 'Available: ${availableTypes.join(', ')}';
-      } else {
-        return 'Biometric authentication available';
-      }
-    } catch (e) {
-      return 'Unable to determine biometric capabilities';
-    }
   }
 }
 
@@ -496,13 +380,13 @@ class ApiService {
     }
   }
 
-  // Receipt API methods
-  static Future<Map<String, dynamic>> uploadReceipt(Receipt receipt) async {
+  // Invoice API methods (changed from receipts)
+  static Future<Map<String, dynamic>> createInvoice(Invoice invoice) async {
     try {
       final response = await http.post(
-        Uri.parse('$baseUrl/receipts/upload'),
+        Uri.parse('$baseUrl/invoices'),
         headers: _getHeaders(),
-        body: json.encode(receipt.toJson()),
+        body: json.encode(invoice.toJson()),
       ).timeout(const Duration(seconds: 30));
       
       return json.decode(response.body);
@@ -511,9 +395,9 @@ class ApiService {
     }
   }
 
-  static Future<Map<String, dynamic>> getReceipts({int? userId}) async {
+  static Future<Map<String, dynamic>> getInvoices({int? userId}) async {
     try {
-      String url = '$baseUrl/receipts';
+      String url = '$baseUrl/invoices';
       if (userId != null) {
         url += '?user_id=$userId';
       }
@@ -529,10 +413,10 @@ class ApiService {
     }
   }
 
-  static Future<Map<String, dynamic>> deleteReceipt(int receiptId) async {
+  static Future<Map<String, dynamic>> deleteInvoice(int invoiceId) async {
     try {
       final response = await http.delete(
-        Uri.parse('$baseUrl/receipts/$receiptId'),
+        Uri.parse('$baseUrl/invoices/$invoiceId'),
         headers: _getHeaders(),
       ).timeout(const Duration(seconds: 30));
       
@@ -576,7 +460,7 @@ class ApiService {
     }
   }
 
-  // Existing user management methods
+  // User management methods
   static Future<Map<String, dynamic>> getAllUsers() async {
     try {
       final response = await http.get(
@@ -715,6 +599,136 @@ class AuthService {
   }
 }
 
+
+class BiometricAuthService {
+  static final LocalAuthentication _localAuth = LocalAuthentication();
+  static const FlutterSecureStorage _secureStorage = FlutterSecureStorage();
+
+  static Future<bool> isBiometricAvailable() async {
+    try {
+      final bool isAvailable = await _localAuth.isDeviceSupported();
+      if (!isAvailable) return false;
+      
+      final bool canCheckBiometrics = await _localAuth.canCheckBiometrics;
+      return canCheckBiometrics;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  static Future<String> getBiometricCapabilitiesDescription() async {
+    try {
+      final List<BiometricType> availableBiometrics = await _localAuth.getAvailableBiometrics();
+      
+      if (availableBiometrics.isEmpty) {
+        return 'No biometric authentication available';
+      }
+      
+      if (availableBiometrics.contains(BiometricType.face)) {
+        return 'Face ID available for secure authentication';
+      } else if (availableBiometrics.contains(BiometricType.fingerprint)) {
+        return 'Fingerprint authentication available';
+      } else if (availableBiometrics.contains(BiometricType.iris)) {
+        return 'Iris authentication available';
+      } else {
+        return 'Biometric authentication available';
+      }
+    } catch (e) {
+      return 'Unable to determine biometric capabilities';
+    }
+  }
+
+  static Future<bool> isBiometricLoginEnabled() async {
+    try {
+      final String? stored = await _secureStorage.read(key: 'biometric_enabled');
+      return stored == 'true';
+    } catch (e) {
+      return false;
+    }
+  }
+
+  static Future<bool> enableBiometricLogin(User user) async {
+    try {
+      final bool didAuthenticate = await _localAuth.authenticate(
+        localizedReason: 'Enable biometric login for Neural Pulse',
+        options: const AuthenticationOptions(
+          biometricOnly: true,
+          stickyAuth: true,
+        ),
+      );
+
+      if (didAuthenticate) {
+        await _secureStorage.write(key: 'biometric_enabled', value: 'true');
+        await _secureStorage.write(key: 'biometric_user_id', value: user.id.toString());
+        await _secureStorage.write(key: 'biometric_username', value: user.username);
+        return true;
+      }
+      return false;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  static Future<bool> disableBiometricLogin() async {
+    try {
+      await _secureStorage.delete(key: 'biometric_enabled');
+      await _secureStorage.delete(key: 'biometric_user_id');
+      await _secureStorage.delete(key: 'biometric_username');
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  static Future<LoginResult> loginWithBiometric() async {
+    try {
+      final bool isEnabled = await isBiometricLoginEnabled();
+      if (!isEnabled) {
+        return LoginResult.error('Biometric login is not enabled');
+      }
+
+      final bool didAuthenticate = await _localAuth.authenticate(
+        localizedReason: 'Login to Neural Pulse',
+        options: const AuthenticationOptions(
+          biometricOnly: true,
+          stickyAuth: true,
+        ),
+      );
+
+      if (didAuthenticate) {
+        final String? username = await _secureStorage.read(key: 'biometric_username');
+        if (username != null) {
+          // In a real app, you'd verify this with your backend
+          // For now, we'll create a basic user object
+          final user = User(
+            id: 1,
+            username: username,
+            role: 'user',
+            fullName: username,
+            email: '',
+            isActive: true,
+            createdAt: DateTime.now(),
+            biometricEnabled: true,
+          );
+          return LoginResult.success(user);
+        }
+      }
+      return LoginResult.error('Biometric authentication failed');
+    } catch (e) {
+      return LoginResult.error('Biometric authentication error: ${e.toString()}');
+    }
+  }
+
+  static Future<void> clearStoredData() async {
+    try {
+      await _secureStorage.deleteAll();
+    } catch (e) {
+      // Handle error silently
+    }
+  }
+}
+
+
 // UI Components - Starting with AuthWrapper
 class AuthWrapper extends StatefulWidget {
   const AuthWrapper({Key? key}) : super(key: key);
@@ -792,11 +806,16 @@ class _AuthWrapperState extends State<AuthWrapper> {
   }
 }
 
-class LoginSelectionScreen extends StatelessWidget {
+class LoginSelectionScreen extends StatefulWidget {
   final bool hasBiometricCapability;
-
+  
   const LoginSelectionScreen({Key? key, required this.hasBiometricCapability}) : super(key: key);
+  
+  @override
+  _LoginSelectionScreenState createState() => _LoginSelectionScreenState();
+}
 
+class _LoginSelectionScreenState extends State<LoginSelectionScreen> {
   Future<void> _loginWithBiometric(BuildContext context) async {
     final result = await AuthService.loginWithBiometric();
     
@@ -929,7 +948,7 @@ class LoginSelectionScreen extends StatelessWidget {
                       width: double.infinity,
                       padding: const EdgeInsets.all(16),
                       decoration: BoxDecoration(
-                        color: Colors.grey.withOpacity(0.2),
+                        color: Colors.grey.withValues(alpha: 0.2),
                         borderRadius: BorderRadius.circular(15),
                       ),
                       child: const Row(
@@ -953,48 +972,518 @@ class LoginSelectionScreen extends StatelessWidget {
       ),
     );
   }
-
-// Receipt List Screen
-class ReceiptListScreen extends StatefulWidget {
-  final User user;
-
-  const ReceiptListScreen({Key? key, required this.user}) : super(key: key);
-
-  @override
-  _ReceiptListScreenState createState() => _ReceiptListScreenState();
 }
 
-class _ReceiptListScreenState extends State<ReceiptListScreen> {
-  List<Receipt> _receipts = [];
+class LoginScreen extends StatefulWidget {
+  const LoginScreen({Key? key}) : super(key: key);
+
+  @override
+  _LoginScreenState createState() => _LoginScreenState();
+}
+
+class _LoginScreenState extends State<LoginScreen> {
+  final _formKey = GlobalKey<FormState>();
+  final _usernameController = TextEditingController();
+  final _passwordController = TextEditingController();
   bool _isLoading = false;
+  bool _obscurePassword = true;
   String? _errorMessage;
 
   @override
-  void initState() {
-    super.initState();
-    _loadReceipts();
+  void dispose() {
+    _usernameController.dispose();
+    _passwordController.dispose();
+    super.dispose();
   }
 
-  Future<void> _loadReceipts() async {
+  Future<void> _login() async {
+    if (!_formKey.currentState!.validate()) return;
+    
     setState(() {
       _isLoading = true;
       _errorMessage = null;
     });
     
     try {
-      final response = await ApiService.getReceipts(userId: widget.user.id);
+      final result = await AuthService.login(
+        _usernameController.text.trim(),
+        _passwordController.text,
+      );
+      
+      if (result.success && result.user != null) {
+        Navigator.pushAndRemoveUntil(
+          context,
+          MaterialPageRoute(builder: (context) => MainNavigationScreen(user: result.user!)),
+          (route) => false,
+        );
+      } else {
+        setState(() {
+          _errorMessage = result.error ?? 'Login failed';
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      setState(() {
+        _errorMessage = 'Login error: ${e.toString()}';
+        _isLoading = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back, color: Colors.white),
+          onPressed: () => Navigator.pop(context),
+        ),
+      ),
+      body: Container(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [
+              Color(0xFF000000),
+              Color(0xFF2E0249),
+              Color(0xFF4A148C),
+              Color(0xFF6A1B9A),
+            ],
+          ),
+        ),
+        child: SafeArea(
+          child: Center(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(32.0),
+              child: Form(
+                key: _formKey,
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(20),
+                      decoration: BoxDecoration(
+                        gradient: const LinearGradient(colors: [Color(0xFF4A148C), Color(0xFF6A1B9A)]),
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: const Icon(Icons.psychology, size: 64, color: Colors.white),
+                    ),
+                    const SizedBox(height: 32),
+                    const Text('Welcome Back', style: TextStyle(color: Colors.white, fontSize: 28, fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 8),
+                    const Text('Sign in to continue', style: TextStyle(color: Colors.white70, fontSize: 16)),
+                    const SizedBox(height: 48),
+                    
+                    TextFormField(
+                      controller: _usernameController,
+                      style: const TextStyle(color: Colors.white),
+                      decoration: InputDecoration(
+                        labelText: 'Username',
+                        labelStyle: const TextStyle(color: Colors.white70),
+                        prefixIcon: const Icon(Icons.person, color: Colors.white),
+                        filled: true,
+                        fillColor: const Color(0xFF1A1A1A).withValues(alpha: 0.6),
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(15), borderSide: BorderSide.none),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(15),
+                          borderSide: const BorderSide(color: Colors.white30, width: 1),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(15),
+                          borderSide: const BorderSide(color: Colors.white, width: 2),
+                        ),
+                      ),
+                      validator: (value) {
+                        if (value == null || value.trim().isEmpty) {
+                          return 'Please enter your username';
+                        }
+                        return null;
+                      },
+                    ),
+                    
+                    const SizedBox(height: 20),
+                    
+                    TextFormField(
+                      controller: _passwordController,
+                      style: const TextStyle(color: Colors.white),
+                      obscureText: _obscurePassword,
+                      decoration: InputDecoration(
+                        labelText: 'Password',
+                        labelStyle: const TextStyle(color: Colors.white70),
+                        prefixIcon: const Icon(Icons.lock, color: Colors.white),
+                        suffixIcon: IconButton(
+                          icon: Icon(
+                            _obscurePassword ? Icons.visibility_off : Icons.visibility,
+                            color: Colors.white70,
+                          ),
+                          onPressed: () {
+                            setState(() {
+                              _obscurePassword = !_obscurePassword;
+                            });
+                          },
+                        ),
+                        filled: true,
+                        fillColor: const Color(0xFF1A1A1A).withValues(alpha: 0.6),
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(15), borderSide: BorderSide.none),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(15),
+                          borderSide: const BorderSide(color: Colors.white30, width: 1),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(15),
+                          borderSide: const BorderSide(color: Colors.white, width: 2),
+                        ),
+                      ),
+                      validator: (value) {
+                        if (value == null || value.isEmpty) {
+                          return 'Please enter your password';
+                        }
+                        return null;
+                      },
+                      onFieldSubmitted: (_) => _login(),
+                    ),
+                    
+                    const SizedBox(height: 24),
+                    
+                    if (_errorMessage != null)
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        margin: const EdgeInsets.only(bottom: 16),
+                        decoration: BoxDecoration(
+                          color: Colors.red.withValues(alpha: 0.1),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: Colors.red.withValues(alpha: 0.3)),
+                        ),
+                        child: Row(
+                          children: [
+                            const Icon(Icons.error, color: Colors.red, size: 20),
+                            const SizedBox(width: 8),
+                            Expanded(child: Text(_errorMessage!, style: const TextStyle(color: Colors.red))),
+                          ],
+                        ),
+                      ),
+                    
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton(
+                        onPressed: _isLoading ? null : _login,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF4A148C),
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 16),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+                          elevation: 0,
+                        ),
+                        child: _isLoading
+                            ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                            : const Text('Sign In', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+                      ),
+                    ),
+                    
+                    const SizedBox(height: 32),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class MainNavigationScreen extends StatefulWidget {
+  final User user;
+
+  const MainNavigationScreen({Key? key, required this.user}) : super(key: key);
+
+  @override
+  _MainNavigationScreenState createState() => _MainNavigationScreenState();
+}
+
+class _MainNavigationScreenState extends State<MainNavigationScreen> {
+  int _selectedIndex = 0;
+  List<Message> _messages = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _addWelcomeMessage();
+  }
+
+  void _addWelcomeMessage() {
+    final welcomeMessage = Message(
+      sender: 'AI Assistant',
+      content: 'Welcome to Neural Pulse, ${widget.user.fullName}! I\'m your AI database assistant. Ask me about sales data, customer information, product details, or any business insights you need.',
+      type: MessageType.system,
+      timestamp: DateTime.now(),
+    );
+    setState(() {
+      _messages.add(welcomeMessage);
+    });
+  }
+
+  void _onMessageAdded(Message message) {
+    setState(() {
+      _messages.add(message);
+    });
+  }
+
+  List<NavigationItem> _getNavigationItems() {
+    List<NavigationItem> items = [
+      NavigationItem(
+        icon: Icons.chat,
+        label: 'Chat',
+        screen: ChatScreen(
+          user: widget.user,
+          messages: _messages,
+          onMessageAdded: _onMessageAdded,
+        ),
+      ),
+    ];
+
+    // Add invoice management for managers and admins
+    if (widget.user.canCreateInvoices) {
+      items.add(NavigationItem(
+        icon: Icons.receipt_long,
+        label: 'Invoices',
+        screen: InvoiceListScreen(user: widget.user),
+      ));
+    }
+
+    items.addAll([
+      NavigationItem(
+        icon: Icons.person,
+        label: 'Profile',
+        screen: ProfileScreen(user: widget.user),
+      ),
+      NavigationItem(
+        icon: Icons.settings,
+        label: 'Settings',
+        screen: const SettingsScreen(),
+      ),
+    ]);
+
+    // Add user management for admins only
+    if (widget.user.canManageUsers) {
+      items.add(NavigationItem(
+        icon: Icons.group,
+        label: 'Users',
+        screen: UserManagementScreen(user: widget.user),
+      ));
+    }
+
+    return items;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final navigationItems = _getNavigationItems();
+    
+    return Scaffold(
+      appBar: AppBar(
+        title: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(colors: [Color(0xFF4A148C), Color(0xFF6A1B9A)]),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Icon(Icons.psychology, color: Colors.white, size: 20),
+            ),
+            const SizedBox(width: 12),
+            const Text('Neural Pulse', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+          ],
+        ),
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        actions: [
+          Container(
+            margin: const EdgeInsets.only(right: 16),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            decoration: BoxDecoration(
+              color: widget.user.roleColor.withValues(alpha: 0.2),
+              borderRadius: BorderRadius.circular(15),
+              border: Border.all(color: widget.user.roleColor.withValues(alpha: 0.5)),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.person, color: widget.user.roleColor, size: 16),
+                const SizedBox(width: 4),
+                Text(
+                  widget.user.role.toUpperCase(),
+                  style: TextStyle(
+                    color: widget.user.roleColor,
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          PopupMenuButton<String>(
+            icon: const Icon(Icons.more_vert, color: Colors.white),
+            color: const Color(0xFF1A1A1A),
+            onSelected: (value) async {
+              if (value == 'logout') {
+                final confirmed = await showDialog<bool>(
+                  context: context,
+                  builder: (context) => AlertDialog(
+                    backgroundColor: const Color(0xFF1A1A1A),
+                    title: const Text('Logout', style: TextStyle(color: Colors.white)),
+                    content: const Text('Are you sure you want to logout?', style: TextStyle(color: Colors.white70)),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(context, false),
+                        child: const Text('Cancel', style: TextStyle(color: Colors.white70)),
+                      ),
+                      TextButton(
+                        onPressed: () => Navigator.pop(context, true),
+                        child: const Text('Logout', style: TextStyle(color: Colors.red)),
+                      ),
+                    ],
+                  ),
+                );
+
+                if (confirmed == true) {
+                  await AuthService.logout();
+                  Navigator.pushAndRemoveUntil(
+                    context,
+                    MaterialPageRoute(builder: (context) => const AuthWrapper()),
+                    (route) => false,
+                  );
+                }
+              }
+            },
+            itemBuilder: (context) => [
+              const PopupMenuItem(
+                value: 'logout',
+                child: Row(
+                  children: [
+                    Icon(Icons.logout, color: Colors.red, size: 18),
+                    SizedBox(width: 8),
+                    Text('Logout', style: TextStyle(color: Colors.white)),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+      body: Container(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [
+              Color(0xFF000000),
+              Color(0xFF2E0249),
+              Color(0xFF4A148C),
+              Color(0xFF6A1B9A),
+            ],
+          ),
+        ),
+        child: navigationItems[_selectedIndex].screen,
+      ),
+      bottomNavigationBar: Container(
+        decoration: BoxDecoration(
+          color: const Color(0xFF1A1A1A),
+          border: Border(top: BorderSide(color: Colors.white.withValues(alpha: 0.2))),
+        ),
+        child: BottomNavigationBar(
+          currentIndex: _selectedIndex,
+          onTap: (index) => setState(() => _selectedIndex = index),
+          type: BottomNavigationBarType.fixed,
+          backgroundColor: Colors.transparent,
+          selectedItemColor: const Color(0xFF6A1B9A),
+          unselectedItemColor: Colors.white54,
+          elevation: 0,
+          items: navigationItems.map((item) => BottomNavigationBarItem(
+            icon: Icon(item.icon),
+            label: item.label,
+          )).toList(),
+        ),
+      ),
+      floatingActionButton: _selectedIndex == 1 && widget.user.canCreateInvoices
+          ? FloatingActionButton(
+              onPressed: () async {
+                final result = await Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => InvoiceCreateScreen(user: widget.user),
+                  ),
+                );
+                if (result == true) {
+                  // Refresh the invoice list
+                  setState(() {});
+                }
+              },
+              backgroundColor: const Color(0xFF4A148C),
+              child: const Icon(Icons.add, color: Colors.white),
+            )
+          : null,
+    );
+  }
+}
+
+class NavigationItem {
+  final IconData icon;
+  final String label;
+  final Widget screen;
+
+  NavigationItem({
+    required this.icon,
+    required this.label,
+    required this.screen,
+  });
+}
+
+// Invoice List Screen
+class InvoiceListScreen extends StatefulWidget {
+  final User user;
+
+  const InvoiceListScreen({Key? key, required this.user}) : super(key: key);
+
+  @override
+  _InvoiceListScreenState createState() => _InvoiceListScreenState();
+}
+
+class _InvoiceListScreenState extends State<InvoiceListScreen> {
+  List<Invoice> _invoices = [];
+  bool _isLoading = false;
+  String? _errorMessage;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadInvoices();
+  }
+
+  Future<void> _loadInvoices() async {
+    setState(() {
+      _isLoading = true;
+      _errorMessage = null;
+    });
+    
+    try {
+      final response = await ApiService.getInvoices(userId: widget.user.id);
       
       if (mounted) {
         if (response['success'] == true) {
           setState(() {
-            _receipts = (response['receipts'] as List)
-                .map((receipt) => Receipt.fromJson(receipt))
+            _invoices = (response['invoices'] as List)
+                .map((invoice) => Invoice.fromJson(invoice))
                 .toList();
             _isLoading = false;
           });
         } else {
           setState(() {
-            _errorMessage = response['message'] ?? 'Failed to load receipts';
+            _errorMessage = response['message'] ?? 'Failed to load invoices';
             _isLoading = false;
           });
         }
@@ -1002,20 +1491,20 @@ class _ReceiptListScreenState extends State<ReceiptListScreen> {
     } catch (e) {
       if (mounted) {
         setState(() {
-          _errorMessage = 'Error loading receipts: $e';
+          _errorMessage = 'Error loading invoices: $e';
           _isLoading = false;
         });
       }
     }
   }
 
-  Future<void> _deleteReceipt(Receipt receipt) async {
+  Future<void> _deleteInvoice(Invoice invoice) async {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         backgroundColor: const Color(0xFF1A1A1A),
-        title: const Text('Delete Receipt', style: TextStyle(color: Colors.white)),
-        content: Text('Are you sure you want to delete this receipt from ${receipt.vendor}?', 
+        title: const Text('Delete Invoice', style: TextStyle(color: Colors.white)),
+        content: Text('Are you sure you want to delete this invoice for ${invoice.customerName}?', 
                      style: const TextStyle(color: Colors.white70)),
         actions: [
           TextButton(
@@ -1030,20 +1519,20 @@ class _ReceiptListScreenState extends State<ReceiptListScreen> {
       ),
     );
 
-    if (confirmed == true && receipt.id != null) {
-      final response = await ApiService.deleteReceipt(receipt.id!);
+    if (confirmed == true && invoice.id != null) {
+      final response = await ApiService.deleteInvoice(invoice.id!);
       if (response['success'] == true) {
-        _loadReceipts(); // Refresh the list
+        _loadInvoices(); // Refresh the list
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Receipt deleted successfully'),
+            content: Text('Invoice deleted successfully'),
             backgroundColor: Colors.green,
           ),
         );
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(response['message'] ?? 'Failed to delete receipt'),
+            content: Text(response['message'] ?? 'Failed to delete invoice'),
             backgroundColor: Colors.red,
           ),
         );
@@ -1061,7 +1550,7 @@ class _ReceiptListScreenState extends State<ReceiptListScreen> {
                 children: [
                   CircularProgressIndicator(color: Colors.white),
                   SizedBox(height: 16),
-                  Text('Loading receipts...', style: TextStyle(color: Colors.white70)),
+                  Text('Loading invoices...', style: TextStyle(color: Colors.white70)),
                 ],
               ),
             )
@@ -1075,7 +1564,7 @@ class _ReceiptListScreenState extends State<ReceiptListScreen> {
                       Text(_errorMessage!, style: const TextStyle(color: Colors.red, fontSize: 16), textAlign: TextAlign.center),
                       const SizedBox(height: 16),
                       ElevatedButton(
-                        onPressed: _loadReceipts,
+                        onPressed: _loadInvoices,
                         style: ElevatedButton.styleFrom(
                           backgroundColor: const Color(0xFF4A148C),
                           foregroundColor: Colors.white,
@@ -1092,33 +1581,33 @@ class _ReceiptListScreenState extends State<ReceiptListScreen> {
                       child: Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          const Text('My Receipts', style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold)),
+                          const Text('My Invoices', style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold)),
                           IconButton(
-                            onPressed: _loadReceipts,
+                            onPressed: _loadInvoices,
                             icon: const Icon(Icons.refresh, color: Colors.white),
                           ),
                         ],
                       ),
                     ),
                     Expanded(
-                      child: _receipts.isEmpty
+                      child: _invoices.isEmpty
                           ? const Center(
                               child: Column(
                                 mainAxisAlignment: MainAxisAlignment.center,
                                 children: [
-                                  Icon(Icons.receipt_outlined, size: 64, color: Colors.white54),
+                                  Icon(Icons.receipt_long_outlined, size: 64, color: Colors.white54),
                                   SizedBox(height: 16),
-                                  Text('No receipts found', style: TextStyle(color: Colors.white70, fontSize: 16)),
+                                  Text('No invoices found', style: TextStyle(color: Colors.white70, fontSize: 16)),
                                   SizedBox(height: 8),
-                                  Text('Tap the + button to add your first receipt', style: TextStyle(color: Colors.white54, fontSize: 14)),
+                                  Text('Tap the + button to create your first invoice', style: TextStyle(color: Colors.white54, fontSize: 14)),
                                 ],
                               ),
                             )
                           : ListView.builder(
                               padding: const EdgeInsets.symmetric(horizontal: 16),
-                              itemCount: _receipts.length,
+                              itemCount: _invoices.length,
                               itemBuilder: (context, index) {
-                                final receipt = _receipts[index];
+                                final invoice = _invoices[index];
                                 return Container(
                                   margin: const EdgeInsets.only(bottom: 12),
                                   decoration: BoxDecoration(
@@ -1134,29 +1623,50 @@ class _ReceiptListScreenState extends State<ReceiptListScreen> {
                                         gradient: const LinearGradient(colors: [Color(0xFF4A148C), Color(0xFF6A1B9A)]),
                                         borderRadius: BorderRadius.circular(8),
                                       ),
-                                      child: receipt.imagePath != null
+                                      child: invoice.imagePath != null
                                           ? ClipRRect(
                                               borderRadius: BorderRadius.circular(8),
                                               child: Image.memory(
-                                                base64Decode(receipt.imagePath!),
+                                                base64Decode(invoice.imagePath!),
                                                 fit: BoxFit.cover,
                                                 errorBuilder: (context, error, stackTrace) => 
-                                                    const Icon(Icons.receipt, color: Colors.white),
+                                                    const Icon(Icons.receipt_long, color: Colors.white),
                                               ),
                                             )
-                                          : const Icon(Icons.receipt, color: Colors.white),
+                                          : const Icon(Icons.receipt_long, color: Colors.white),
                                     ),
-                                    title: Text(receipt.vendor, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                                    title: Text(invoice.customerName, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
                                     subtitle: Column(
                                       crossAxisAlignment: CrossAxisAlignment.start,
                                       children: [
-                                        Text('\$${receipt.amount.toStringAsFixed(2)}', 
+                                        Text('\$${invoice.amount.toStringAsFixed(2)}', 
                                              style: const TextStyle(color: Color(0xFF6A1B9A), fontSize: 16, fontWeight: FontWeight.bold)),
                                         const SizedBox(height: 2),
-                                        Text('${receipt.date.day}/${receipt.date.month}/${receipt.date.year}', 
+                                        Text('${invoice.date.day}/${invoice.date.month}/${invoice.date.year}', 
                                              style: const TextStyle(color: Colors.white70, fontSize: 12)),
-                                        if (receipt.description != null && receipt.description!.isNotEmpty)
-                                          Text(receipt.description!, 
+                                        if (invoice.status.isNotEmpty)
+                                          Container(
+                                            margin: const EdgeInsets.only(top: 4),
+                                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                                            decoration: BoxDecoration(
+                                              color: invoice.status == 'paid' ? Colors.green.withValues(alpha: 0.2) : 
+                                                     invoice.status == 'pending' ? Colors.orange.withValues(alpha: 0.2) :
+                                                     Colors.red.withValues(alpha: 0.2),
+                                              borderRadius: BorderRadius.circular(8),
+                                            ),
+                                            child: Text(
+                                              invoice.status.toUpperCase(),
+                                              style: TextStyle(
+                                                color: invoice.status == 'paid' ? Colors.green : 
+                                                       invoice.status == 'pending' ? Colors.orange :
+                                                       Colors.red,
+                                                fontSize: 10,
+                                                fontWeight: FontWeight.bold,
+                                              ),
+                                            ),
+                                          ),
+                                        if (invoice.description != null && invoice.description!.isNotEmpty)
+                                          Text(invoice.description!, 
                                                style: const TextStyle(color: Colors.white60, fontSize: 12),
                                                maxLines: 1,
                                                overflow: TextOverflow.ellipsis),
@@ -1164,12 +1674,12 @@ class _ReceiptListScreenState extends State<ReceiptListScreen> {
                                     ),
                                     trailing: IconButton(
                                       icon: const Icon(Icons.delete, color: Colors.red),
-                                      onPressed: () => _deleteReceipt(receipt),
+                                      onPressed: () => _deleteInvoice(invoice),
                                     ),
                                     onTap: () => Navigator.push(
                                       context,
                                       MaterialPageRoute(
-                                        builder: (context) => ReceiptDetailScreen(receipt: receipt),
+                                        builder: (context) => InvoiceDetailScreen(invoice: invoice),
                                       ),
                                     ),
                                   ),
@@ -1183,30 +1693,34 @@ class _ReceiptListScreenState extends State<ReceiptListScreen> {
   }
 }
 
-// Receipt Upload Screen
-class ReceiptUploadScreen extends StatefulWidget {
+// Invoice Create Screen
+class InvoiceCreateScreen extends StatefulWidget {
   final User user;
 
-  const ReceiptUploadScreen({Key? key, required this.user}) : super(key: key);
+  const InvoiceCreateScreen({Key? key, required this.user}) : super(key: key);
 
   @override
-  _ReceiptUploadScreenState createState() => _ReceiptUploadScreenState();
+  _InvoiceCreateScreenState createState() => _InvoiceCreateScreenState();
 }
 
-class _ReceiptUploadScreenState extends State<ReceiptUploadScreen> {
+class _InvoiceCreateScreenState extends State<InvoiceCreateScreen> {
   final _formKey = GlobalKey<FormState>();
-  final _vendorController = TextEditingController();
+  final _customerNameController = TextEditingController();
   final _amountController = TextEditingController();
   final _descriptionController = TextEditingController();
   
   DateTime _selectedDate = DateTime.now();
+  DateTime? _selectedDueDate;
   File? _selectedImage;
   bool _isLoading = false;
   String? _errorMessage;
+  String _selectedStatus = 'pending';
+
+  final List<String> _statusOptions = ['pending', 'paid', 'overdue', 'cancelled'];
 
   @override
   void dispose() {
-    _vendorController.dispose();
+    _customerNameController.dispose();
     _amountController.dispose();
     _descriptionController.dispose();
     super.dispose();
@@ -1217,7 +1731,7 @@ class _ReceiptUploadScreenState extends State<ReceiptUploadScreen> {
       context: context,
       initialDate: _selectedDate,
       firstDate: DateTime(2020),
-      lastDate: DateTime.now(),
+      lastDate: DateTime.now().add(const Duration(days: 365)),
       builder: (context, child) {
         return Theme(
           data: Theme.of(context).copyWith(
@@ -1239,12 +1753,39 @@ class _ReceiptUploadScreenState extends State<ReceiptUploadScreen> {
     }
   }
 
+  Future<void> _selectDueDate() async {
+    final DateTime? picked = await showDatePicker(
+      context: context,
+      initialDate: _selectedDueDate ?? DateTime.now().add(const Duration(days: 30)),
+      firstDate: DateTime.now(),
+      lastDate: DateTime.now().add(const Duration(days: 365)),
+      builder: (context, child) {
+        return Theme(
+          data: Theme.of(context).copyWith(
+            colorScheme: const ColorScheme.dark(
+              primary: Color(0xFF4A148C),
+              onPrimary: Colors.white,
+              surface: Color(0xFF1A1A1A),
+              onSurface: Colors.white,
+            ),
+          ),
+          child: child!,
+        );
+      },
+    );
+    if (picked != null) {
+      setState(() {
+        _selectedDueDate = picked;
+      });
+    }
+  }
+
   Future<void> _showImageSourceDialog() async {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
         backgroundColor: const Color(0xFF1A1A1A),
-        title: const Text('Add Receipt Image', style: TextStyle(color: Colors.white)),
+        title: const Text('Add Invoice Image', style: TextStyle(color: Colors.white)),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -1280,7 +1821,7 @@ class _ReceiptUploadScreenState extends State<ReceiptUploadScreen> {
     );
   }
 
-  Future<void> _uploadReceipt() async {
+  Future<void> _createInvoice() async {
     if (!_formKey.currentState!.validate()) return;
     
     setState(() {
@@ -1294,35 +1835,37 @@ class _ReceiptUploadScreenState extends State<ReceiptUploadScreen> {
         imageBase64 = await CameraService.convertToBase64(_selectedImage!);
       }
 
-      final receipt = Receipt(
-        vendor: _vendorController.text.trim(),
+      final invoice = Invoice(
+        customerName: _customerNameController.text.trim(),
         amount: double.parse(_amountController.text.trim()),
         date: _selectedDate,
+        dueDate: _selectedDueDate,
         description: _descriptionController.text.trim().isEmpty ? null : _descriptionController.text.trim(),
         imagePath: imageBase64,
         userId: widget.user.id,
-        uploadedAt: DateTime.now(),
+        createdAt: DateTime.now(),
+        status: _selectedStatus,
       );
 
-      final response = await ApiService.uploadReceipt(receipt);
+      final response = await ApiService.createInvoice(invoice);
       
       if (response['success'] == true) {
         Navigator.pop(context, true); // Return true to indicate success
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Receipt uploaded successfully!'),
+            content: Text('Invoice created successfully!'),
             backgroundColor: Colors.green,
           ),
         );
       } else {
         setState(() {
-          _errorMessage = response['message'] ?? 'Failed to upload receipt';
+          _errorMessage = response['message'] ?? 'Failed to create invoice';
           _isLoading = false;
         });
       }
     } catch (e) {
       setState(() {
-        _errorMessage = 'Error uploading receipt: $e';
+        _errorMessage = 'Error creating invoice: $e';
         _isLoading = false;
       });
     }
@@ -1332,7 +1875,7 @@ class _ReceiptUploadScreenState extends State<ReceiptUploadScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Upload Receipt', style: TextStyle(color: Colors.white)),
+        title: const Text('Create Invoice', style: TextStyle(color: Colors.white)),
         backgroundColor: Colors.transparent,
         elevation: 0,
         leading: IconButton(
@@ -1382,7 +1925,7 @@ class _ReceiptUploadScreenState extends State<ReceiptUploadScreen> {
                           children: [
                             const Icon(Icons.add_a_photo, size: 48, color: Colors.white54),
                             const SizedBox(height: 8),
-                            const Text('Add Receipt Image', style: TextStyle(color: Colors.white70)),
+                            const Text('Add Invoice Image', style: TextStyle(color: Colors.white70)),
                             const SizedBox(height: 16),
                             ElevatedButton.icon(
                               onPressed: _showImageSourceDialog,
@@ -1411,16 +1954,16 @@ class _ReceiptUploadScreenState extends State<ReceiptUploadScreen> {
                 const SizedBox(height: 32),
                 
                 // Form Fields
-                const Text('Receipt Details', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+                const Text('Invoice Details', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
                 const SizedBox(height: 16),
                 
                 TextFormField(
-                  controller: _vendorController,
+                  controller: _customerNameController,
                   style: const TextStyle(color: Colors.white),
                   decoration: InputDecoration(
-                    labelText: 'Vendor/Store Name',
+                    labelText: 'Customer Name',
                     labelStyle: const TextStyle(color: Colors.white70),
-                    prefixIcon: const Icon(Icons.store, color: Colors.white),
+                    prefixIcon: const Icon(Icons.person, color: Colors.white),
                     filled: true,
                     fillColor: const Color(0xFF1A1A1A).withValues(alpha: 0.6),
                     border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
@@ -1435,7 +1978,7 @@ class _ReceiptUploadScreenState extends State<ReceiptUploadScreen> {
                   ),
                   validator: (value) {
                     if (value == null || value.trim().isEmpty) {
-                      return 'Please enter the vendor name';
+                      return 'Please enter the customer name';
                     }
                     return null;
                   },
@@ -1476,6 +2019,42 @@ class _ReceiptUploadScreenState extends State<ReceiptUploadScreen> {
                 
                 const SizedBox(height: 16),
                 
+                // Status Dropdown
+                DropdownButtonFormField<String>(
+                  value: _selectedStatus,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: InputDecoration(
+                    labelText: 'Status',
+                    labelStyle: const TextStyle(color: Colors.white70),
+                    prefixIcon: const Icon(Icons.flag, color: Colors.white),
+                    filled: true,
+                    fillColor: const Color(0xFF1A1A1A).withValues(alpha: 0.6),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: const BorderSide(color: Colors.white30, width: 1),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: const BorderSide(color: Colors.white, width: 2),
+                    ),
+                  ),
+                  dropdownColor: const Color(0xFF1A1A1A),
+                  items: _statusOptions.map((status) => DropdownMenuItem(
+                    value: status,
+                    child: Text(status.toUpperCase(), style: const TextStyle(color: Colors.white)),
+                  )).toList(),
+                  onChanged: (value) {
+                    if (value != null) {
+                      setState(() {
+                        _selectedStatus = value;
+                      });
+                    }
+                  },
+                ),
+                
+                const SizedBox(height: 16),
+                
                 GestureDetector(
                   onTap: _selectDate,
                   child: Container(
@@ -1492,9 +2071,43 @@ class _ReceiptUploadScreenState extends State<ReceiptUploadScreen> {
                         Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            const Text('Date', style: TextStyle(color: Colors.white70, fontSize: 12)),
+                            const Text('Invoice Date', style: TextStyle(color: Colors.white70, fontSize: 12)),
                             Text(
                               '${_selectedDate.day}/${_selectedDate.month}/${_selectedDate.year}',
+                              style: const TextStyle(color: Colors.white, fontSize: 16),
+                            ),
+                          ],
+                        ),
+                        const Spacer(),
+                        const Icon(Icons.arrow_drop_down, color: Colors.white70),
+                      ],
+                    ),
+                  ),
+                ),
+                
+                const SizedBox(height: 16),
+                
+                GestureDetector(
+                  onTap: _selectDueDate,
+                  child: Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF1A1A1A).withValues(alpha: 0.6),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.white30, width: 1),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.event, color: Colors.white),
+                        const SizedBox(width: 16),
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text('Due Date (Optional)', style: TextStyle(color: Colors.white70, fontSize: 12)),
+                            Text(
+                              _selectedDueDate != null 
+                                  ? '${_selectedDueDate!.day}/${_selectedDueDate!.month}/${_selectedDueDate!.year}'
+                                  : 'Not set',
                               style: const TextStyle(color: Colors.white, fontSize: 16),
                             ),
                           ],
@@ -1553,7 +2166,7 @@ class _ReceiptUploadScreenState extends State<ReceiptUploadScreen> {
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton(
-                    onPressed: _isLoading ? null : _uploadReceipt,
+                    onPressed: _isLoading ? null : _createInvoice,
                     style: ElevatedButton.styleFrom(
                       backgroundColor: const Color(0xFF4A148C),
                       foregroundColor: Colors.white,
@@ -1563,7 +2176,7 @@ class _ReceiptUploadScreenState extends State<ReceiptUploadScreen> {
                     ),
                     child: _isLoading
                         ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                        : const Text('Upload Receipt', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+                        : const Text('Create Invoice', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
                   ),
                 ),
                 
@@ -1577,17 +2190,17 @@ class _ReceiptUploadScreenState extends State<ReceiptUploadScreen> {
   }
 }
 
-// Receipt Detail Screen
-class ReceiptDetailScreen extends StatelessWidget {
-  final Receipt receipt;
+// Invoice Detail Screen
+class InvoiceDetailScreen extends StatelessWidget {
+  final Invoice invoice;
 
-  const ReceiptDetailScreen({Key? key, required this.receipt}) : super(key: key);
+  const InvoiceDetailScreen({Key? key, required this.invoice}) : super(key: key);
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text(receipt.vendor, style: const TextStyle(color: Colors.white)),
+        title: Text(invoice.customerName, style: const TextStyle(color: Colors.white)),
         backgroundColor: Colors.transparent,
         elevation: 0,
         leading: IconButton(
@@ -1613,8 +2226,8 @@ class ReceiptDetailScreen extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Receipt Image
-              if (receipt.imagePath != null) ...[
+              // Invoice Image
+              if (invoice.imagePath != null) ...[
                 Container(
                   width: double.infinity,
                   height: 300,
@@ -1625,7 +2238,7 @@ class ReceiptDetailScreen extends StatelessWidget {
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(12),
                     child: Image.memory(
-                      base64Decode(receipt.imagePath!),
+                      base64Decode(invoice.imagePath!),
                       fit: BoxFit.contain,
                       errorBuilder: (context, error, stackTrace) => 
                           const Center(child: Icon(Icons.broken_image, size: 64, color: Colors.white54)),
@@ -1635,17 +2248,22 @@ class ReceiptDetailScreen extends StatelessWidget {
                 const SizedBox(height: 32),
               ],
               
-              // Receipt Details
-              const Text('Receipt Details', style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold)),
+              // Invoice Details
+              const Text('Invoice Details', style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold)),
               const SizedBox(height: 16),
               
-              _buildDetailCard('Vendor', receipt.vendor, Icons.store),
-              _buildDetailCard('Amount', '\${receipt.amount.toStringAsFixed(2)}', Icons.attach_money),
-              _buildDetailCard('Date', '${receipt.date.day}/${receipt.date.month}/${receipt.date.year}', Icons.calendar_today),
-              _buildDetailCard('Uploaded', '${receipt.uploadedAt.day}/${receipt.uploadedAt.month}/${receipt.uploadedAt.year}', Icons.upload),
+              _buildDetailCard('Customer', invoice.customerName, Icons.person),
+              _buildDetailCard('Amount', '\$${invoice.amount.toStringAsFixed(2)}', Icons.attach_money),
+              _buildDetailCard('Invoice Date', '${invoice.date.day}/${invoice.date.month}/${invoice.date.year}', Icons.calendar_today),
               
-              if (receipt.description != null && receipt.description!.isNotEmpty)
-                _buildDetailCard('Description', receipt.description!, Icons.description),
+              if (invoice.dueDate != null)
+                _buildDetailCard('Due Date', '${invoice.dueDate!.day}/${invoice.dueDate!.month}/${invoice.dueDate!.year}', Icons.event),
+              
+              _buildDetailCard('Status', invoice.status.toUpperCase(), Icons.flag, statusColor: _getStatusColor(invoice.status)),
+              _buildDetailCard('Created', '${invoice.createdAt.day}/${invoice.createdAt.month}/${invoice.createdAt.year}', Icons.add_circle),
+              
+              if (invoice.description != null && invoice.description!.isNotEmpty)
+                _buildDetailCard('Description', invoice.description!, Icons.description),
             ],
           ),
         ),
@@ -1653,7 +2271,22 @@ class ReceiptDetailScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildDetailCard(String title, String value, IconData icon) {
+  Color _getStatusColor(String status) {
+    switch (status.toLowerCase()) {
+      case 'paid':
+        return Colors.green;
+      case 'pending':
+        return Colors.orange;
+      case 'overdue':
+        return Colors.red;
+      case 'cancelled':
+        return Colors.grey;
+      default:
+        return Colors.white;
+    }
+  }
+
+  Widget _buildDetailCard(String title, String value, IconData icon, {Color? statusColor}) {
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(16),
@@ -1671,7 +2304,14 @@ class ReceiptDetailScreen extends StatelessWidget {
             children: [
               Text(title, style: const TextStyle(color: Colors.white54, fontSize: 12)),
               const SizedBox(height: 2),
-              Text(value, style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w500)),
+              Text(
+                value, 
+                style: TextStyle(
+                  color: statusColor ?? Colors.white, 
+                  fontSize: 16, 
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
             ],
           ),
         ],
