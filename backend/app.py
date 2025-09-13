@@ -906,17 +906,17 @@ def register_face():
             if existing_face:
                 # Update existing registration
                 cursor.execute("""
-                    UPDATE face_recognition_data 
-                    SET face_encoding = %s, face_image_original = %s, registered_at = NOW()
+                    UPDATE face_recognition_data
+                    SET face_features = %s, registered_at = NOW()
                     WHERE user_id = %s AND is_active = true
-                """, (face_encoding, image_base64, user_id))
+                """, (image_base64, user_id))
                 message = "Face registration updated successfully"
             else:
                 # Create new registration
                 cursor.execute("""
-                    INSERT INTO face_recognition_data (user_id, face_encoding, face_image_original, is_active, registered_at)
-                    VALUES (%s, %s, %s, true, NOW())
-                """, (user_id, face_encoding, image_base64))
+                    INSERT INTO face_recognition_data (user_id, face_features, registered_at, is_active)
+                    VALUES (%s, %s, NOW(), true)
+                """, (user_id, image_base64))
                 message = "Face registered successfully"
             
             # Update user to enable face recognition
