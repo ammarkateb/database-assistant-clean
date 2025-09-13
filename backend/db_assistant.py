@@ -46,7 +46,350 @@ class DatabaseAssistant:
         self.setup_ai_model()
         self.setup_database_pool()
         self.conversation_history = []
-        
+    
+
+
+    def enroll_face_sample(self, user_id: int, face_features: str, sample_number: int) -> Dict[str, Any]:
+        """Enroll a single face sample for a user (1-5)"""
+        try:
+            with self.get_db_connection() as conn:
+                cursor = conn.cursor()
+                
+                # Validate sample number
+                if sample_number not in [1, 2, 3, 4, 5]:
+                    return {
+                        'success': False,
+                        'message': 'Sample number must be between 1 and 5'
+                    }
+                
+                # Insert or update the face sample
+                cursor.execute("""
+                    INSERT INTO face_recognition_data (user_id, face_features, sample_number, is_active, registered_at)
+                    VALUES (%s, %s, %s, true, NOW())
+                    ON CONFLICT (user_id, sample_number) 
+                    DO UPDATE SET 
+                        face_features = EXCLUDED.face_features,
+                        registered_at = NOW(),
+                        is_active = true
+                """, (user_id, face_features, sample_number))
+                
+                conn.commit()
+                
+                self.log_user_activity(user_id, 'face_sample_enrollment', f'Sample {sample_number} enrolled')
+                
+                return {
+                    'success': True,
+                    'message': f'Face sample {sample_number} enrolled successfully',
+                    'sample_number': sample_number
+                }
+                
+        except Exception as e:
+            logger.error(f"Face sample enrollment error: {e}")
+            return {
+                'success': False,
+                'message': f'Face sample enrollment failed: {str(e)}'
+            }
+
+    def complete_face_enrollment(self, user_id: int) -> Dict[str, Any]:
+        """Complete face enrollment and enable face auth for user"""
+        try:
+            with self.get_db_connection() as conn:
+                cursor = conn.cursor()
+                
+                # Check how many samples are enrolled
+                cursor.execute("""
+                    SELECT COUNT(*) FROM face_recognition_data 
+                    WHERE user_id = %s AND is_active = true
+                """, (user_id,))
+                
+                sample_count = cursor.fetchone()[0]
+                
+                if sample_count >= 3:  # Minimum 3 samples required
+                    # Enable face auth for user
+                    cursor.execute("""
+                        UPDATE users SET face_auth_enabled = true WHERE user_id = %s
+                    """, (user_id,))
+                    
+                    conn.commit()
+                    
+                    self.log_user_activity(user_id, 'face_enrollment_completed', f'Face auth enabled with {sample_count} samples')
+                    
+                    return {
+                        'success': True,
+                        'message': f'Face authentication enabled with {sample_count} samples',
+                        'samples_enrolled': sample_count
+                    }
+                else:
+                    return {
+                        'success': False,
+                        'message': f'Need at least 3 samples to enable face auth. Currently have {sample_count}',
+                        'samples_enrolled': sample_count
+                    }
+                    
+        except Exception as e:
+            logger.error(f"Face enrollment completion error: {e}")
+            return {
+                'success': False,
+                'message': f'Face enrollment completion failed: {str(e)}'
+            }
+
+    def verify_face_with_samples(self, face_features: str) -> Dict[str, Any]:
+        """Verify face against all stored samples with 0.75 confidence threshold"""
+        try:
+            import json
+            
+            # Parse the incoming face features
+            try:
+                features_data = json.loads(face_features)
+            except json.JSONDecodeError:
+                return {
+                    'success': False,
+                    'message': 'Invalid face features format'
+                }
+            
+            with self.get_db_connection() as conn:
+                cursor = conn.cursor()
+                
+                # Get all active face samples for all users
+                cursor.execute("""
+                    SELECT frd.user_id, frd.face_features, frd.sample_number,
+                        u.username, u.full_name, u.role
+                    FROM face_recognition_data frd
+                    JOIN users u ON frd.user_id = u.user_id
+                    WHERE frd.is_active = true AND u.is_active = true AND u.face_auth_enabled = true
+                """)
+                
+                enrolled_samples = cursor.fetchall()
+                
+                best_match = None
+                best_confidence = 0
+                user_confidences = {}  # Track best confidence per user
+                
+                for sample_record in enrolled_samples:
+                    user_id, stored_encoding, sample_num, username, full_name, role = sample_record
+                    
+                    try:
+                        stored_features = json.loads(stored_encoding)
+                        
+                        # Calculate confidence for this sample
+                        confidence = self._calculate_face_similarity(features_data, stored_features)
+                        
+                        # Track the best confidence for each user across all their samples
+                        if user_id not in user_confidences or confidence > user_confidences[user_id]['confidence']:
+                            user_confidences[user_id] = {
+                                'confidence': confidence,
+                                'username': username,
+                                'full_name': full_name,
+                                'role': role,
+                                'sample_number': sample_num
+                            }
+                            
+                    except (json.JSONDecodeError, Exception) as e:
+                        logger.warning(f"Error processing stored face data for user {user_id}, sample {sample_num}: {e}")
+                        continue
+                
+                # Find the user with the highest confidence across all their samples
+                for user_id, user_data in user_confidences.items():
+                    if user_data['confidence'] > best_confidence:
+                        best_confidence = user_data['confidence']
+                        best_match = {
+                            'user_id': user_id,
+                            'username': user_data['username'],
+                            'full_name': user_data['full_name'],
+                            'role': user_data['role'],
+                            'confidence': user_data['confidence'],
+                            'matched_sample': user_data['sample_number']
+                        }
+                
+                # Check if best match meets the 0.75 confidence threshold
+                if best_match and best_confidence >= 0.75:
+                    # Update last used timestamp for all samples of this user
+                    cursor.execute("""
+                        UPDATE face_recognition_data 
+                        SET last_used = NOW() 
+                        WHERE user_id = %s AND is_active = true
+                    """, (best_match['user_id'],))
+                    conn.commit()
+                    
+                    # Log successful face authentication
+                    self.log_user_activity(
+                        best_match['user_id'], 
+                        'face_login_success', 
+                        f'Face auth successful with confidence {best_confidence:.3f} (sample {best_match["matched_sample"]})'
+                    )
+                    
+                    return {
+                        'success': True,
+                        'user': {
+                            'user_id': best_match['user_id'],
+                            'username': best_match['username'],
+                            'full_name': best_match['full_name'],
+                            'role': best_match['role']
+                        },
+                        'confidence': best_confidence,
+                        'matched_sample': best_match['matched_sample'],
+                        'message': f'Welcome back, {best_match["full_name"]}!'
+                    }
+                else:
+                    # Log failed attempt
+                    confidence_info = f"Best confidence: {best_confidence:.3f}" if best_match else "No matches found"
+                    logger.info(f"Face verification failed - {confidence_info}")
+                    
+                    return {
+                        'success': False,
+                        'message': 'Face not recognized. Please try again with better lighting.',
+                        'confidence': best_confidence if best_match else 0.0
+                    }
+                    
+        except Exception as e:
+            logger.error(f"Face verification error: {e}")
+            return {
+                'success': False,
+                'message': f'Face verification failed: {str(e)}'
+            }
+
+    def get_user_face_samples_count(self, user_id: int) -> int:
+        """Get the number of face samples enrolled for a user"""
+        try:
+            with self.get_db_connection() as conn:
+                cursor = conn.cursor()
+                
+                cursor.execute("""
+                    SELECT COUNT(*) FROM face_recognition_data 
+                    WHERE user_id = %s AND is_active = true
+                """, (user_id,))
+                
+                return cursor.fetchone()[0]
+                
+        except Exception as e:
+            logger.error(f"Error getting face samples count: {e}")
+            return 0
+
+    def reset_user_face_auth(self, user_id: int) -> Dict[str, Any]:
+        """Reset/delete all face samples for a user (for re-registration)"""
+        try:
+            with self.get_db_connection() as conn:
+                cursor = conn.cursor()
+                
+                # Disable face auth
+                cursor.execute("""
+                    UPDATE users SET face_auth_enabled = false WHERE user_id = %s
+                """, (user_id,))
+                
+                # Delete all face samples
+                cursor.execute("""
+                    DELETE FROM face_recognition_data WHERE user_id = %s
+                """, (user_id,))
+                
+                conn.commit()
+                
+                self.log_user_activity(user_id, 'face_auth_reset', 'Face authentication reset for re-registration')
+                
+                return {
+                    'success': True,
+                    'message': 'Face authentication reset successfully. You can now re-register.'
+                }
+                
+        except Exception as e:
+            logger.error(f"Face auth reset error: {e}")
+            return {
+                'success': False,
+                'message': f'Face auth reset failed: {str(e)}'
+            }
+
+    def _calculate_face_similarity(self, features1: Dict, features2: Dict) -> float:
+        """Enhanced face similarity calculation with better weighting"""
+        try:
+            similarity_scores = []
+            
+            # 1. Bounding box comparison (weight: 0.2)
+            if 'bounding_box' in features1 and 'bounding_box' in features2:
+                bb1, bb2 = features1['bounding_box'], features2['bounding_box']
+                if all(key in bb1 and key in bb2 for key in ['width', 'height']):
+                    width_ratio = min(bb1['width'], bb2['width']) / max(bb1['width'], bb2['width'])
+                    height_ratio = min(bb1['height'], bb2['height']) / max(bb1['height'], bb2['height'])
+                    bb_similarity = (width_ratio + height_ratio) / 2
+                    similarity_scores.append(('bounding_box', bb_similarity, 0.2))
+            
+            # 2. Head euler angles comparison (weight: 0.3)
+            angle_features = ['head_euler_angle_x', 'head_euler_angle_y', 'head_euler_angle_z']
+            angle_similarities = []
+            
+            for angle_feature in angle_features:
+                if (angle_feature in features1 and angle_feature in features2 and 
+                    features1[angle_feature] is not None and features2[angle_feature] is not None):
+                    
+                    angle_diff = abs(float(features1[angle_feature]) - float(features2[angle_feature]))
+                    # Allow up to 20 degrees difference for head pose
+                    angle_similarity = max(0, 1 - (angle_diff / 20.0))
+                    angle_similarities.append(angle_similarity)
+            
+            if angle_similarities:
+                avg_angle_similarity = sum(angle_similarities) / len(angle_similarities)
+                similarity_scores.append(('head_angles', avg_angle_similarity, 0.3))
+            
+            # 3. Eye probabilities comparison (weight: 0.2)
+            eye_features = ['left_eye_open_probability', 'right_eye_open_probability']
+            eye_similarities = []
+            
+            for eye_feature in eye_features:
+                if (eye_feature in features1 and eye_feature in features2 and
+                    features1[eye_feature] is not None and features2[eye_feature] is not None):
+                    
+                    eye_diff = abs(float(features1[eye_feature]) - float(features2[eye_feature]))
+                    eye_similarity = max(0, 1 - eye_diff)
+                    eye_similarities.append(eye_similarity)
+            
+            if eye_similarities:
+                avg_eye_similarity = sum(eye_similarities) / len(eye_similarities)
+                similarity_scores.append(('eye_probabilities', avg_eye_similarity, 0.2))
+            
+            # 4. Landmark positions comparison (weight: 0.3)
+            if 'landmarks' in features1 and 'landmarks' in features2:
+                landmarks1, landmarks2 = features1['landmarks'], features2['landmarks']
+                common_landmarks = set(landmarks1.keys()) & set(landmarks2.keys())
+                
+                if common_landmarks:
+                    landmark_similarities = []
+                    
+                    for landmark_type in common_landmarks:
+                        try:
+                            lm1, lm2 = landmarks1[landmark_type], landmarks2[landmark_type]
+                            if (lm1.get('x') is not None and lm1.get('y') is not None and
+                                lm2.get('x') is not None and lm2.get('y') is not None):
+                                
+                                x_diff = abs(float(lm1['x']) - float(lm2['x']))
+                                y_diff = abs(float(lm1['y']) - float(lm2['y']))
+                                distance = (x_diff**2 + y_diff**2)**0.5
+                                
+                                # Normalize distance (assuming max face size of ~400 pixels)
+                                normalized_distance = min(1.0, distance / 400.0)
+                                landmark_similarity = 1.0 - normalized_distance
+                                landmark_similarities.append(landmark_similarity)
+                                
+                        except (ValueError, TypeError, KeyError):
+                            continue
+                    
+                    if landmark_similarities:
+                        avg_landmark_similarity = sum(landmark_similarities) / len(landmark_similarities)
+                        similarity_scores.append(('landmarks', avg_landmark_similarity, 0.3))
+            
+            # Calculate weighted average
+            if similarity_scores:
+                weighted_sum = sum(score * weight for _, score, weight in similarity_scores)
+                total_weight = sum(weight for _, _, weight in similarity_scores)
+                
+                if total_weight > 0:
+                    final_similarity = weighted_sum / total_weight
+                    return min(1.0, max(0.0, final_similarity))  # Clamp between 0 and 1
+            
+            return 0.0
+            
+        except Exception as e:
+            logger.error(f"Error calculating face similarity: {e}")
+            return 0.0
+
+
     def load_environment(self):
         """Load environment variables"""
         load_dotenv()

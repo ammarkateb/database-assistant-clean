@@ -167,6 +167,244 @@ def require_role(required_roles):
         return wrapper
     return decorator
 
+# Add these endpoints to your app.py Flask application
+
+# Face enrollment endpoints
+@app.route('/face-auth/enroll-sample', methods=['POST'])
+@require_auth
+def enroll_face_sample(user):
+    """Enroll a single face sample (1-5) for current user"""
+    try:
+        data = request.get_json()
+        
+        if not data or 'face_features' not in data or 'sample_number' not in data:
+            return jsonify({
+                'success': False,
+                'message': 'Face features and sample number required'
+            }), 400
+        
+        face_features = data['face_features']
+        sample_number = data['sample_number']
+        
+        result = db_assistant.enroll_face_sample(user['user_id'], face_features, sample_number)
+        
+        if result['success']:
+            logger.info(f"Face sample {sample_number} enrolled for user: {user['username']}")
+        
+        return jsonify(result)
+        
+    except Exception as e:
+        logger.error(f"Face sample enrollment error: {e}")
+        return jsonify({
+            'success': False,
+            'message': f'Face sample enrollment failed: {str(e)}'
+        }), 500
+
+@app.route('/face-auth/complete-enrollment', methods=['POST'])
+@require_auth
+def complete_face_enrollment(user):
+    """Complete face enrollment and enable face auth"""
+    try:
+        result = db_assistant.complete_face_enrollment(user['user_id'])
+        
+        if result['success']:
+            logger.info(f"Face enrollment completed for user: {user['username']}")
+        
+        return jsonify(result)
+        
+    except Exception as e:
+        logger.error(f"Face enrollment completion error: {e}")
+        return jsonify({
+            'success': False,
+            'message': f'Face enrollment completion failed: {str(e)}'
+        }), 500
+
+@app.route('/face-auth/samples-count', methods=['GET'])
+@require_auth
+def get_face_samples_count(user):
+    """Get number of face samples enrolled for current user"""
+    try:
+        count = db_assistant.get_user_face_samples_count(user['user_id'])
+        
+        return jsonify({
+            'success': True,
+            'samples_enrolled': count,
+            'samples_needed': max(0, 5 - count),
+            'enrollment_complete': count >= 3
+        })
+        
+    except Exception as e:
+        logger.error(f"Error getting face samples count: {e}")
+        return jsonify({
+            'success': False,
+            'message': 'Failed to get face samples count'
+        }), 500
+
+# Face verification endpoint
+@app.route('/face-auth/verify', methods=['POST'])
+def verify_face_login():
+    """Verify face for login (with 3-attempt limit and 0.75 confidence)"""
+    if not DB_AVAILABLE:
+        return jsonify({
+            'success': False,
+            'message': 'Database not available'
+        }), 500
+    
+    try:
+        data = request.get_json()
+        
+        if not data or 'face_features' not in data:
+            return jsonify({
+                'success': False,
+                'message': 'Face features required'
+            }), 400
+        
+        face_features = data['face_features']
+        
+        # Track failed attempts in session
+        if 'face_auth_attempts' not in session:
+            session['face_auth_attempts'] = 0
+        
+        # Check if too many attempts
+        if session['face_auth_attempts'] >= 3:
+            return jsonify({
+                'success': False,
+                'message': 'Too many failed face authentication attempts. Please use username/password login.',
+                'redirect_to_login': True,
+                'attempts_exceeded': True
+            }), 429
+        
+        result = db_assistant.verify_face_with_samples(face_features)
+        
+        if result['success']:
+            user = result['user']
+            
+            # Clear failed attempts on success
+            session['face_auth_attempts'] = 0
+            
+            # Set user session
+            session['user_id'] = user['user_id']
+            session['username'] = user['username']
+            session['role'] = user['role']
+            session['full_name'] = user['full_name']
+            session.permanent = True
+            
+            # Initialize conversation history
+            if str(user['user_id']) not in conversation_histories:
+                conversation_histories[str(user['user_id'])] = []
+            
+            logger.info(f"Face authentication successful for user: {user['username']} (confidence: {result['confidence']:.3f})")
+            
+            return jsonify({
+                'success': True,
+                'user': user,
+                'confidence': result['confidence'],
+                'matched_sample': result['matched_sample'],
+                'message': result['message']
+            })
+        else:
+            # Increment failed attempts
+            session['face_auth_attempts'] += 1
+            attempts_remaining = 3 - session['face_auth_attempts']
+            
+            logger.warning(f"Face authentication failed (attempt {session['face_auth_attempts']}/3)")
+            
+            if attempts_remaining > 0:
+                return jsonify({
+                    'success': False,
+                    'message': f"{result['message']} ({attempts_remaining} attempts remaining)",
+                    'attempts_remaining': attempts_remaining,
+                    'confidence': result.get('confidence', 0.0)
+                })
+            else:
+                return jsonify({
+                    'success': False,
+                    'message': 'Face authentication failed. Redirecting to username/password login.',
+                    'redirect_to_login': True,
+                    'attempts_exceeded': True
+                })
+                
+    except Exception as e:
+        logger.error(f"Face verification error: {e}")
+        return jsonify({
+            'success': False,
+            'message': f'Face verification failed: {str(e)}'
+        }), 500
+
+# Face auth management endpoints
+@app.route('/face-auth/reset', methods=['POST'])
+@require_auth
+def reset_face_auth(user):
+    """Reset face authentication for re-registration"""
+    try:
+        result = db_assistant.reset_user_face_auth(user['user_id'])
+        
+        if result['success']:
+            logger.info(f"Face auth reset for user: {user['username']}")
+        
+        return jsonify(result)
+        
+    except Exception as e:
+        logger.error(f"Face auth reset error: {e}")
+        return jsonify({
+            'success': False,
+            'message': f'Face auth reset failed: {str(e)}'
+        }), 500
+
+@app.route('/face-auth/status', methods=['GET'])
+@require_auth
+def get_face_auth_status(user):
+    """Get face authentication status for current user"""
+    try:
+        samples_count = db_assistant.get_user_face_samples_count(user['user_id'])
+        
+        with db_assistant.get_db_connection() as conn:
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT face_auth_enabled FROM users WHERE user_id = %s
+            """, (user['user_id'],))
+            
+            result = cursor.fetchone()
+            face_auth_enabled = result[0] if result else False
+        
+        return jsonify({
+            'success': True,
+            'face_auth_enabled': face_auth_enabled,
+            'samples_enrolled': samples_count,
+            'samples_needed': max(0, 5 - samples_count),
+            'enrollment_complete': samples_count >= 3,
+            'can_re_register': True,
+            'confidence_threshold': 0.75,
+            'max_samples': 5,
+            'min_samples_required': 3
+        })
+        
+    except Exception as e:
+        logger.error(f"Error getting face auth status: {e}")
+        return jsonify({
+            'success': False,
+            'message': 'Failed to get face auth status'
+        }), 500
+
+# Clear face auth attempts (for testing/admin)
+@app.route('/face-auth/clear-attempts', methods=['POST'])
+def clear_face_auth_attempts():
+    """Clear face authentication attempts for current session"""
+    try:
+        session['face_auth_attempts'] = 0
+        
+        return jsonify({
+            'success': True,
+            'message': 'Face authentication attempts cleared'
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': f'Failed to clear attempts: {str(e)}'
+        }), 500
+
 # MAIN ENDPOINTS
 @app.route('/')
 def health_check():
@@ -508,10 +746,6 @@ def facial_authenticate():
             'message': f'Authentication failed: {str(e)}'
         }), 500
     
-@app.route('/facial-auth/test', methods=['POST', 'GET'])
-def test_facial_auth():
-    return jsonify({"success": True, "message": "Facial auth routes are working"})
-
 @app.route('/facial-auth/create-admin', methods=['POST'])
 def create_facial_admin():
     """Create admin user for facial authentication"""
@@ -588,6 +822,83 @@ def get_facial_users():
         return jsonify({
             'success': False,
             'message': f'Failed to get users: {str(e)}'
+        }), 500
+
+@app.route('/facial-auth/register', methods=['POST'])
+def register_face():
+    """Register user face for authentication"""
+    if not DB_AVAILABLE:
+        return jsonify({
+            'success': False,
+            'message': 'Database not available'
+        }), 500
+    
+    try:
+        data = request.get_json()
+        
+        if not data or 'image' not in data or 'user_id' not in data:
+            return jsonify({
+                'success': False,
+                'message': 'Image data and user_id required'
+            }), 400
+        
+        image_base64 = data['image']
+        user_id = data['user_id']
+        
+        # Clean base64 string if it has data URL prefix
+        if image_base64.startswith('data:'):
+            image_base64 = image_base64.split(',')[1]
+        
+        # Create hash from input image
+        import hashlib
+        face_encoding = hashlib.sha256(image_base64.encode()).hexdigest()
+        
+        with db_assistant.get_db_connection() as conn:
+            cursor = conn.cursor()
+            
+            # Check if user already has face registered
+            cursor.execute("""
+                SELECT face_id FROM face_recognition_data 
+                WHERE user_id = %s AND is_active = true
+            """, (user_id,))
+            
+            existing_face = cursor.fetchone()
+            
+            if existing_face:
+                # Update existing registration
+                cursor.execute("""
+                    UPDATE face_recognition_data 
+                    SET face_encoding = %s, face_image_original = %s, registered_at = NOW()
+                    WHERE user_id = %s AND is_active = true
+                """, (face_encoding, image_base64, user_id))
+                message = "Face registration updated successfully"
+            else:
+                # Create new registration
+                cursor.execute("""
+                    INSERT INTO face_recognition_data (user_id, face_encoding, face_image_original, is_active, registered_at)
+                    VALUES (%s, %s, %s, true, NOW())
+                """, (user_id, face_encoding, image_base64))
+                message = "Face registered successfully"
+            
+            # Update user to enable face recognition
+            cursor.execute("""
+                UPDATE users SET face_recognition_enabled = true WHERE user_id = %s
+            """, (user_id,))
+            
+            conn.commit()
+            
+            logger.info(f"Face registration successful for user_id: {user_id}")
+            
+            return jsonify({
+                'success': True,
+                'message': message
+            })
+            
+    except Exception as e:
+        logger.error(f"Face registration error: {e}")
+        return jsonify({
+            'success': False,
+            'message': f'Registration failed: {str(e)}'
         }), 500
 
 @app.route('/facial-auth/delete-user/<user_id>', methods=['DELETE'])
