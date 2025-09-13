@@ -904,7 +904,7 @@ def register_face():
             existing_face = cursor.fetchone()
             
             if existing_face:
-                # Update existing registration
+                # Update existing registration  
                 cursor.execute("""
                     UPDATE face_recognition_data
                     SET face_features = %s, registered_at = NOW()
@@ -914,9 +914,9 @@ def register_face():
             else:
                 # Create new registration
                 cursor.execute("""
-                    INSERT INTO face_recognition_data (user_id, face_features, registered_at, is_active)
-                    VALUES (%s, %s, NOW(), true)
-                """, (user_id, image_base64))
+                    INSERT INTO face_recognition_data (user_id, face_features, sample_number, registered_at, is_active)
+                    VALUES (%s, %s, %s, NOW(), true)
+                """, (user_id, image_base64, 1))  # Add sample_number = 1
                 message = "Face registered successfully"
             
             # Update user to enable face recognition
