@@ -1,0 +1,28 @@
+# Flutter specific files
+.dart_tool/
+.flutter-tool-state
+.packages
+/build/
+
+# Android-specific files
+/android/local.properties
+/android/.gradle
+/android/app/build/
+
+# iOS-specific files
+/ios/.flutter-symlinks
+/ios/.symlinks
+/ios/Flutter/Generated.xcconfig
+/ios/Flutter/podhelper.rb
+/ios/Pods/
+/ios/build/
+
+# IDE and OS specific files
+.idea/
+.vscode/
+.DS_Store
+*.iml
+*.iws
+*.ipr
+*~
+*.log
