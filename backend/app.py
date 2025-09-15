@@ -815,15 +815,14 @@ def create_invoice(user):
             
             # Create invoice
             cursor.execute("""
-                INSERT INTO invoices (customer_id, invoice_date, total_amount, status, created_by)
-                VALUES (%s, %s, %s, %s, %s)
+                INSERT INTO invoices (customer_id, invoice_date, total_amount, status)
+                VALUES (%s, %s, %s, %s)
                 RETURNING invoice_id
             """, (
-                data.get('customer_id', 1),  # Default customer if not specified
+                data.get('customer_id', 1),
                 data['date'],
                 data['amount'],
-                data.get('status', 'pending'),
-                user['user_id']
+                data.get('status', 'pending')
             ))
             
             invoice_id = cursor.fetchone()[0]
@@ -915,13 +914,10 @@ def delete_invoice(user, invoice_id):
         with db_assistant.get_db_connection() as conn:
             cursor = conn.cursor()
             
+            # First delete related records to avoid foreign key constraint
+            cursor.execute("DELETE FROM inventory_movements WHERE invoice_id = %s", (invoice_id,))
+            cursor.execute("DELETE FROM invoice_items WHERE invoice_id = %s", (invoice_id,))
             cursor.execute("DELETE FROM invoices WHERE invoice_id = %s", (invoice_id,))
-            
-            if cursor.rowcount == 0:
-                return jsonify({
-                    'success': False,
-                    'message': 'Invoice not found'
-                }), 404
             
             conn.commit()
             
