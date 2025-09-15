@@ -12,7 +12,6 @@ import hashlib
 from contextlib import contextmanager
 from datetime import datetime
 from typing import Dict, Any, List, Optional, Tuple
-
 import pandas as pd
 import psycopg2
 from psycopg2.pool import SimpleConnectionPool
@@ -563,9 +562,13 @@ class DatabaseAssistant:
             with self.get_db_connection() as conn:
                 cursor = conn.cursor()
                 
-                # Ensure details is a string, not JSON
-                if details is not None and not isinstance(details, str):
-                    details = str(details)
+                # Convert details to JSON string if it's not already a string
+                if details is not None:
+                    if isinstance(details, str):
+                        # Wrap plain text in JSON object
+                        details = json.dumps({"message": details})
+                    else:
+                        details = json.dumps(details)
                 
                 cursor.execute("""
                     INSERT INTO audit_log (user_id, action, details, timestamp)
@@ -913,6 +916,8 @@ class DatabaseAssistant:
                         if actual_result is not None:
                             processed_message = base_message.replace('[COUNT]', str(actual_result))
                             processed_message = processed_message.replace('[VALUE]', str(actual_result))
+                            processed_message = processed_message.replace('[SUM(total_amount)]', str(actual_result))
+                            processed_message = processed_message.replace('[SUM]', str(actual_result))
                         else:
                             processed_message = base_message
                         
