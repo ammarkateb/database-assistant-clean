@@ -353,39 +353,6 @@ class FaceAuthService {
     return await CameraService.captureImage();
   }
 
-  // NEW METHOD 2: Simple single face enrollment with ML Kit processing
-  static Future<Map<String, dynamic>> enrollFace(File imageFile, String userId) async {
-    try {
-      // Process with ML Kit first
-      final inputImage = InputImage.fromFile(imageFile);
-      final faces = await _faceDetector.processImage(inputImage);
-
-      if (faces.isEmpty) {
-        return {
-          'success': false,
-          'message': 'No face detected. Please position your face clearly in the frame.'
-        };
-      }
-
-      if (faces.length > 1) {
-        return {
-          'success': false,
-          'message': 'Multiple faces detected. Please ensure only you are in the frame.'
-        };
-      }
-
-      final face = faces.first;
-      final faceFeatures = _extractEnhancedFaceFeatures(face, imageFile);
-
-      // Send ML Kit features to your existing endpoint
-      return await ApiService.enrollFaceSample(userId, faceFeatures, 1);
-    } catch (e) {
-      return {
-        'success': false,
-        'message': 'Face enrollment failed: $e'
-      };
-    }
-  }
 
   // Enroll multiple face samples (3-5 required)
   static Future<Map<String, dynamic>> enrollMultipleFaces(String userId) async {
@@ -491,89 +458,88 @@ class FaceAuthService {
   }
 
   static String _extractEnhancedFaceFeatures(Face face, File imageFile) {
-    final landmarks = face.landmarks;
-    final contours = face.contours;
-    
+    // More comprehensive feature extraction
     Map<String, dynamic> features = {
+      'version': '2.0', // Version identifier for compatibility
       'bounding_box': {
         'left': face.boundingBox.left,
         'top': face.boundingBox.top,
         'width': face.boundingBox.width,
         'height': face.boundingBox.height,
+        'center_x': face.boundingBox.left + (face.boundingBox.width / 2),
+        'center_y': face.boundingBox.top + (face.boundingBox.height / 2),
       },
-      'head_euler_angle_x': face.headEulerAngleX,
-      'head_euler_angle_y': face.headEulerAngleY,
-      'head_euler_angle_z': face.headEulerAngleZ,
-      'left_eye_open_probability': face.leftEyeOpenProbability,
-      'right_eye_open_probability': face.rightEyeOpenProbability,
-      'smiling_probability': face.smilingProbability,
+      'head_rotation': {
+        'x': face.headEulerAngleX ?? 0.0,
+        'y': face.headEulerAngleY ?? 0.0, 
+        'z': face.headEulerAngleZ ?? 0.0,
+      },
+      'eye_probabilities': {
+        'left_open': face.leftEyeOpenProbability ?? 0.5,
+        'right_open': face.rightEyeOpenProbability ?? 0.5,
+      },
+      'smile_probability': face.smilingProbability ?? 0.0,
       'tracking_id': face.trackingId,
     };
     
-    // Add landmarks
-    if (landmarks.isNotEmpty) {
-      features['landmarks'] = landmarks.map((type, landmark) => 
-        MapEntry(type.toString(), {
-          'x': landmark?.position.x,
-          'y': landmark?.position.y,
-        }));
+    // Enhanced landmark extraction with null safety
+    Map<String, Map<String, double?>> landmarkData = {};
+    if (face.landmarks.isNotEmpty) {
+      for (var entry in face.landmarks.entries) {
+        if (entry.value != null) {
+          landmarkData[entry.key.toString()] = {
+            'x': entry.value!.position.x.toDouble(),
+            'y': entry.value!.position.y.toDouble(),
+          };
+        }
+      }
+      features['landmarks'] = landmarkData;
     }
     
-    // Add contours for more detailed matching
-    if (contours.isNotEmpty) {
-      features['contours'] = contours.map((type, contour) => 
-        MapEntry(type.toString(), contour?.points.map((point) => {
-          'x': point.x,
-          'y': point.y,
-        }).toList()));
+    // Enhanced contour extraction
+    Map<String, List<Map<String, double>>> contourData = {};
+    if (face.contours.isNotEmpty) {
+      for (var entry in face.contours.entries) {
+        if (entry.value != null && entry.value!.points.isNotEmpty) {
+          contourData[entry.key.toString()] = entry.value!.points.map((point) => {
+            'x': point.x.toDouble(),
+            'y': point.y.toDouble(),
+          }).toList();
+        }
+      }
+      features['contours'] = contourData;
     }
+    
+    // Add image metadata for better matching
+    features['image_info'] = {
+      'timestamp': DateTime.now().millisecondsSinceEpoch,
+      'face_confidence': _calculateFaceConfidence(face),
+    };
     
     return json.encode(features);
   }
 
-  static Future<Map<String, dynamic>> verifyFaceLogin() async {
-    try {
-      final imageFile = await CameraService.captureImage();
-      if (imageFile == null) {
-        return {
-          'success': false,
-          'message': 'Failed to capture image for verification'
-        };
-      }
-
-      // Process with ML Kit
-      final inputImage = InputImage.fromFile(imageFile);
-      final faces = await _faceDetector.processImage(inputImage);
-
-      if (faces.isEmpty) {
-        return {
-          'success': false,
-          'message': 'No face detected. Please position your face clearly in the frame.'
-        };
-      }
-
-      if (faces.length > 1) {
-        return {
-          'success': false,
-          'message': 'Multiple faces detected. Please ensure only you are in the frame.'
-        };
-      }
-
-      final face = faces.first;
-      final faceFeatures = _extractEnhancedFaceFeatures(face, imageFile);
-
-      // Send to server for verification
-      final result = await ApiService.verifyFaceLogin(faceFeatures);
-      return result;
-
-    } catch (e) {
-      return {
-        'success': false,
-        'message': 'Face verification failed: $e'
-      };
+  static double _calculateFaceConfidence(Face face) {
+    double confidence = 1.0;
+    
+    // Reduce confidence for extreme head rotations
+    if (face.headEulerAngleX != null) {
+      confidence *= (1.0 - (face.headEulerAngleX!.abs() / 90.0) * 0.3);
     }
+    if (face.headEulerAngleY != null) {
+      confidence *= (1.0 - (face.headEulerAngleY!.abs() / 90.0) * 0.3);
+    }
+    
+    // Reduce confidence if eyes are not open
+    if (face.leftEyeOpenProbability != null && face.leftEyeOpenProbability! < 0.5) {
+      confidence *= 0.8;
+    }
+    if (face.rightEyeOpenProbability != null && face.rightEyeOpenProbability! < 0.5) {
+      confidence *= 0.8;
+    }
+    
+    return confidence.clamp(0.0, 1.0);
   }
-
   static Future<Map<String, dynamic>> getFaceAuthStatus() async {
     try {
       return await ApiService.getFaceAuthStatus();
@@ -686,6 +652,7 @@ class FaceAuthService {
   }
 }
 
+
 class ApiService {
   static const String baseUrl = 'https://database-assistant-clean-production.up.railway.app';
   static Map<String, String> _cookies = {};
@@ -708,16 +675,13 @@ class ApiService {
     _cookies.addAll(cookies);
   }
 
-  // Enhanced Face Authentication Methods
-  static Future<Map<String, dynamic>> enrollFaceSample(String userId, String faceFeatures, int sampleNumber) async {
+  static Future<Map<String, dynamic>> completeFaceEnrollment(String userId) async {
     try {
       final response = await http.post(
-        Uri.parse('$baseUrl/face-auth/enroll-sample'),
+        Uri.parse('$baseUrl/face-auth/complete-enrollment'),
         headers: _getHeaders(),
         body: json.encode({
           'user_id': int.parse(userId),
-          'face_features': faceFeatures,
-          'sample_number': sampleNumber,
         }),
       ).timeout(const Duration(seconds: 30));
       
@@ -727,13 +691,15 @@ class ApiService {
     }
   }
 
-  static Future<Map<String, dynamic>> completeFaceEnrollment(String userId) async {
+  static Future<Map<String, dynamic>> enrollFaceSample(String userId, String faceFeatures, int sampleNumber) async {
     try {
       final response = await http.post(
-        Uri.parse('$baseUrl/face-auth/complete-enrollment'),
+        Uri.parse('$baseUrl/face-auth/enroll-sample'),
         headers: _getHeaders(),
         body: json.encode({
           'user_id': int.parse(userId),
+          'face_features': faceFeatures,
+          'sample_number': sampleNumber,
         }),
       ).timeout(const Duration(seconds: 30));
       
@@ -1052,17 +1018,6 @@ class ApiService {
       return {'success': false, 'message': 'Network error: $e'};
     }
   }
-
-  // Legacy method for backward compatibility
-  static Future<Map<String, dynamic>> enrollFaceWithServer(String imageBase64, String userId) async {
-    // For legacy compatibility, this will enroll as sample 1
-    return await enrollFaceSample(userId, imageBase64, 1);
-  }
-
-  static Future<Map<String, dynamic>> verifyFaceWithServer(String imageBase64) async {
-    // For legacy compatibility
-    return await verifyFaceLogin(imageBase64);
-  }
 }
 
 class AuthService {
@@ -1089,6 +1044,8 @@ class AuthService {
     }
     return cookies;
   }
+
+
 
   static Future<LoginResult> login(String username, String password) async {
     try {
@@ -1125,40 +1082,6 @@ class AuthService {
     return await BiometricAuthService.loginWithBiometric();
   }
 
-  // Enhanced Face Login with proper error handling
-  static Future<LoginResult> loginWithFace() async {
-    try {
-      // Clear any previous face auth attempts
-      await ApiService.clearFaceAuthAttempts();
-      
-      // Use enhanced face verification
-      final result = await FaceAuthService.verifyFaceLogin();
-      
-      if (result['success'] == true) {
-        if (result['user'] != null) {
-          _currentUser = User.fromJson(result['user']);
-          return LoginResult.success(_currentUser!);
-        } else {
-          return LoginResult.error('User data not received from server');
-        }
-      } else {
-        String errorMessage = result['message'] ?? 'Face authentication failed';
-        
-        // Handle specific error cases
-        if (result['redirect_to_login'] == true) {
-          errorMessage += '\nPlease use username/password login.';
-        } else if (result['attempts_remaining'] != null) {
-          int remaining = result['attempts_remaining'];
-          errorMessage += '\n$remaining attempts remaining.';
-        }
-        
-        return LoginResult.error(errorMessage);
-      }
-    } catch (e) {
-      return LoginResult.error('Face authentication error: ${e.toString()}');
-    }
-  }
-
   // Setup face authentication for current user
   static Future<Map<String, dynamic>> setupFaceAuth() async {
     if (_currentUser == null) {
@@ -1181,6 +1104,67 @@ class AuthService {
       };
     }
   }
+
+  static Future<LoginResult> loginWithFace() async {
+      try {
+        // Clear any previous face auth attempts
+        await ApiService.clearFaceAuthAttempts();
+        
+        // Capture image
+        final imageFile = await FaceAuthService.captureFaceImage();
+        if (imageFile == null) {
+          return LoginResult.error('Failed to capture image');
+        }
+        
+        // Process with ML Kit
+        final inputImage = InputImage.fromFile(imageFile);
+        final faces = await FaceDetector(
+          options: FaceDetectorOptions(
+            enableContours: true,
+            enableLandmarks: true,
+            enableClassification: true,
+            enableTracking: true,
+          ),
+        ).processImage(inputImage);
+        
+        if (faces.isEmpty) {
+          return LoginResult.error('No face detected');
+        }
+        
+        if (faces.length > 1) {
+          return LoginResult.error('Multiple faces detected. Please ensure only you are in the frame.');
+        }
+        
+        // Extract features in the format your backend expects
+        final faceFeatures = FaceAuthService._extractEnhancedFaceFeatures(faces.first, imageFile);
+        
+        // Use the enhanced face verification
+        final result = await ApiService.verifyFaceLogin(faceFeatures);
+        
+        if (result['success'] == true) {
+          if (result['user'] != null) {
+            _currentUser = User.fromJson(result['user']);
+            return LoginResult.success(_currentUser!);
+          } else {
+            return LoginResult.error('User data not received from server');
+          }
+        } else {
+          String errorMessage = result['message'] ?? 'Face authentication failed';
+          
+          // Handle specific error cases
+          if (result['redirect_to_login'] == true) {
+            errorMessage += '\nPlease use username/password login.';
+          } else if (result['attempts_remaining'] != null) {
+            int remaining = result['attempts_remaining'];
+            errorMessage += '\n$remaining attempts remaining.';
+          }
+          
+          return LoginResult.error(errorMessage);
+        }
+      } catch (e) {
+        return LoginResult.error('Face authentication error: ${e.toString()}');
+      }
+    }
 
   // Get face authentication status for current user
   static Future<Map<String, dynamic>> getFaceAuthStatus() async {
@@ -5289,74 +5273,38 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   Future<void> _setupFaceAuth() async {
-    setState(() => _isLoading = true);
+    final result = await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => FaceAuthSetupScreen(user: widget.user),
+      ),
+    );
     
-    try {
-      final imageFile = await FaceAuthService.captureFaceImage();
-      if (imageFile != null) {
-        final result = await FaceAuthService.enrollFace(imageFile, widget.user.id.toString());
-        
-        if (result['success'] == true) {
-          setState(() => _isFaceAuthEnabled = true);
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Face authentication set up successfully!'),
-              backgroundColor: Colors.green,
-            ),
-          );
-        } else {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(result['message'] ?? 'Failed to set up face authentication'),
-              backgroundColor: Colors.red,
-            ),
-          );
-        }
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Failed to capture face image'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-    } catch (e) {
+    if (result == true) {
+      setState(() => _isFaceAuthEnabled = true);
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Error: ${e.toString()}'),
-          backgroundColor: Colors.red,
+        const SnackBar(
+          content: Text('Face authentication set up successfully!'),
+          backgroundColor: Colors.green,
         ),
       );
-    } finally {
-      setState(() => _isLoading = false);
     }
-  }
+  } // Close _setupFaceAuth here
 
+  // _buildInfoCard should be a separate method at the class level
   Widget _buildInfoCard(String title, String value, IconData icon) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: const Color(0xFF1A1A1A),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.white.withOpacity(0.2)),
-      ),
-      child: Row(
-        children: [
-          Icon(icon, color: Colors.white70, size: 20),
-          const SizedBox(width: 16),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(title, style: const TextStyle(color: Colors.white54, fontSize: 12)),
-              const SizedBox(height: 2),
-              Text(value, style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w500)),
-            ],
-          ),
-        ],
+    return Card(
+      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: ListTile(
+        leading: Icon(icon, color: Theme.of(context).colorScheme.primary),
+        title: Text(title),
+        subtitle: Text(value),
       ),
     );
   }
+
+  
+
 
   @override
   Widget build(BuildContext context) {
