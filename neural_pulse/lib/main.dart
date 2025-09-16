@@ -131,19 +131,45 @@ class MyApp extends StatelessWidget {
       title: 'Neural Pulse - AI Database Assistant',
       theme: ThemeData(
         useMaterial3: true,
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF4A148C),
-          brightness: Brightness.dark,
-          primary: const Color(0xFF4A148C),
-          secondary: const Color(0xFF6A1B9A),
-          tertiary: const Color(0xFF4A148C),
-          surface: const Color(0xFF000000),
+        brightness: Brightness.dark,
+        primaryColor: const Color(0xFF0D1B2A),
+        scaffoldBackgroundColor: const Color(0xFF0D1B2A),
+        colorScheme: const ColorScheme.dark(
+          primary: Color(0xFF64FFDA),      // Professional teal accent
+          secondary: Color(0xFF7C4DFF),    // Purple accent
+          tertiary: Color(0xFF40C4FF),     // Light blue accent
+          surface: Color(0xFF1B263B),      // Dark blue-gray surfaces
+          background: Color(0xFF0D1B2A),   // Deep navy background
+          onPrimary: Color(0xFF000000),    // Black text on primary
+          onSecondary: Color(0xFFFFFFFF),  // White text on secondary
+          onSurface: Color(0xFFFFFFFF),    // White text on surfaces
+          onBackground: Color(0xFFE0E1DD), // Light gray text on background
         ),
-        scaffoldBackgroundColor: const Color(0xFF000000),
         appBarTheme: const AppBarTheme(
-          backgroundColor: Colors.transparent,
-          elevation: 0,
+          backgroundColor: Color(0xFF1B263B),
+          elevation: 8,
           foregroundColor: Colors.white,
+          shadowColor: Color(0xFF64FFDA),
+        ),
+        elevatedButtonTheme: ElevatedButtonThemeData(
+          style: ElevatedButton.styleFrom(
+            elevation: 8,
+            shadowColor: const Color(0xFF64FFDA).withOpacity(0.3),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+              side: const BorderSide(color: Colors.white, width: 1.5),
+            ),
+            foregroundColor: Colors.white,
+            textStyle: const TextStyle(fontWeight: FontWeight.w600),
+          ),
+        ),
+        cardTheme: CardThemeData(
+          elevation: 12,
+          shadowColor: const Color(0xFF64FFDA).withValues(alpha: 0.2),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+            side: BorderSide(color: Colors.white.withValues(alpha: 0.2), width: 1),
+          ),
         ),
       ),
       home: const AuthWrapper(),
@@ -199,8 +225,8 @@ class User {
   Color get roleColor {
     switch (role) {
       case 'visitor': return const Color(0xFF7B1FA2);
-      case 'viewer': return const Color(0xFF6A1B9A);
-      case 'manager': return const Color(0xFF4A148C);
+      case 'viewer': return const Color(0xFF64FFDA);
+      case 'manager': return const Color(0xFF1B263B);
       case 'admin': return const Color(0xFF2E0249);
       default: return const Color(0xFF808080);
     }
@@ -521,23 +547,37 @@ class FaceAuthService {
 
   static double _calculateFaceConfidence(Face face) {
     double confidence = 1.0;
-    
-    // Reduce confidence for extreme head rotations
+
+    // STRICTER: More restrictive head rotation limits
     if (face.headEulerAngleX != null) {
-      confidence *= (1.0 - (face.headEulerAngleX!.abs() / 90.0) * 0.3);
+      double xAngle = face.headEulerAngleX!.abs();
+      if (xAngle > 10) confidence *= 0.6;  // Stricter rotation limit
+      if (xAngle > 20) confidence *= 0.3;  // Very strict for large rotations
     }
+
     if (face.headEulerAngleY != null) {
-      confidence *= (1.0 - (face.headEulerAngleY!.abs() / 90.0) * 0.3);
+      double yAngle = face.headEulerAngleY!.abs();
+      if (yAngle > 10) confidence *= 0.6;  // Stricter rotation limit
+      if (yAngle > 20) confidence *= 0.3;  // Very strict for large rotations
     }
-    
-    // Reduce confidence if eyes are not open
-    if (face.leftEyeOpenProbability != null && face.leftEyeOpenProbability! < 0.5) {
-      confidence *= 0.8;
+
+    // STRICTER: Both eyes must be clearly open
+    if (face.leftEyeOpenProbability != null && face.leftEyeOpenProbability! < 0.8) {
+      confidence *= 0.4;  // Much stricter eye requirement
     }
-    if (face.rightEyeOpenProbability != null && face.rightEyeOpenProbability! < 0.5) {
-      confidence *= 0.8;
+    if (face.rightEyeOpenProbability != null && face.rightEyeOpenProbability! < 0.8) {
+      confidence *= 0.4;  // Much stricter eye requirement
     }
-    
+
+    // STRICTER: Require larger, clearer faces
+    double faceArea = face.boundingBox.width * face.boundingBox.height;
+    if (faceArea < 20000) confidence *= 0.2; // Face too small
+
+    // STRICTER: Require minimum face dimensions
+    if (face.boundingBox.width < 200 || face.boundingBox.height < 200) {
+      confidence *= 0.3; // Face too small in frame
+    }
+
     return confidence.clamp(0.0, 1.0);
   }
   static Future<Map<String, dynamic>> getFaceAuthStatus() async {
@@ -1525,7 +1565,7 @@ class _UserEditScreenState extends State<UserEditScreen> {
                 );
               }
             },
-            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF4A148C)),
+            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF1B263B)),
             child: const Text('Change Password', style: TextStyle(color: Colors.white)),
           ),
         ],
@@ -1612,10 +1652,10 @@ class _UserEditScreenState extends State<UserEditScreen> {
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
             colors: [
-              Color(0xFF000000),
-              Color(0xFF2E0249),
-              Color(0xFF4A148C),
-              Color(0xFF6A1B9A),
+              Color(0xFF0D1B2A),
+              Color(0xFF1B263B),
+              Color(0xFF415A77),
+              Color(0xFF64FFDA),
             ],
           ),
         ),
@@ -1839,7 +1879,7 @@ class _UserEditScreenState extends State<UserEditScreen> {
                               _isActive = value;
                             });
                           },
-                          activeColor: const Color(0xFF4A148C),
+                          activeColor: const Color(0xFF1B263B),
                         ),
                         Text(
                           _isActive ? 'Active' : 'Inactive',
@@ -1877,7 +1917,7 @@ class _UserEditScreenState extends State<UserEditScreen> {
                     child: ElevatedButton(
                       onPressed: _isLoading ? null : _updateUser,
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF4A148C),
+                        backgroundColor: const Color(0xFF1B263B),
                         foregroundColor: Colors.white,
                         padding: const EdgeInsets.symmetric(vertical: 16),
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -1967,12 +2007,12 @@ class _EnhancedInvoiceListScreenState extends State<EnhancedInvoiceListScreen> {
           mainAxisSize: MainAxisSize.min,
           children: [
             ListTile(
-              leading: const Icon(Icons.camera_alt, color: Color(0xFF4A148C)),
+              leading: const Icon(Icons.camera_alt, color: Color(0xFF1B263B)),
               title: const Text('Take Photo', style: TextStyle(color: Colors.white)),
               onTap: () => Navigator.pop(context, ImageSource.camera),
             ),
             ListTile(
-              leading: const Icon(Icons.photo_library, color: Color(0xFF4A148C)),
+              leading: const Icon(Icons.photo_library, color: Color(0xFF1B263B)),
               title: const Text('Choose from Gallery', style: TextStyle(color: Colors.white)),
               onTap: () => Navigator.pop(context, ImageSource.gallery),
             ),
@@ -2053,9 +2093,9 @@ class _EnhancedInvoiceListScreenState extends State<EnhancedInvoiceListScreen> {
                   child: ElevatedButton(
                     onPressed: () => setState(() => _selectedTab = 'invoices'),
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: _selectedTab == 'invoices' ? const Color(0xFF4A148C) : Colors.transparent,
+                      backgroundColor: _selectedTab == 'invoices' ? const Color(0xFF1B263B) : Colors.transparent,
                       foregroundColor: Colors.white,
-                      side: const BorderSide(color: Color(0xFF4A148C)),
+                      side: const BorderSide(color: Color(0xFF1B263B)),
                     ),
                     child: const Text('Invoices'),
                   ),
@@ -2066,9 +2106,9 @@ class _EnhancedInvoiceListScreenState extends State<EnhancedInvoiceListScreen> {
                     child: ElevatedButton(
                       onPressed: () => setState(() => _selectedTab = 'receipts'),
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: _selectedTab == 'receipts' ? const Color(0xFF4A148C) : Colors.transparent,
+                        backgroundColor: _selectedTab == 'receipts' ? const Color(0xFF1B263B) : Colors.transparent,
                         foregroundColor: Colors.white,
-                        side: const BorderSide(color: Color(0xFF4A148C)),
+                        side: const BorderSide(color: Color(0xFF1B263B)),
                       ),
                       child: const Text('Receipts'),
                     ),
@@ -2096,12 +2136,12 @@ class _EnhancedInvoiceListScreenState extends State<EnhancedInvoiceListScreen> {
                   _loadInvoices();
                 }
               },
-              backgroundColor: const Color(0xFF4A148C),
+              backgroundColor: const Color(0xFF1B263B),
               child: const Icon(Icons.add, color: Colors.white),
             )
           : FloatingActionButton(
               onPressed: _uploadReceipt,
-              backgroundColor: const Color(0xFF6A1B9A),
+              backgroundColor: const Color(0xFF64FFDA),
               child: const Icon(Icons.camera_alt, color: Colors.white),
             ),
     );
@@ -2133,7 +2173,7 @@ class _EnhancedInvoiceListScreenState extends State<EnhancedInvoiceListScreen> {
             ElevatedButton(
               onPressed: _loadInvoices,
               style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF4A148C),
+                backgroundColor: const Color(0xFF1B263B),
                 foregroundColor: Colors.white,
               ),
               child: const Text('Retry'),
@@ -2175,7 +2215,7 @@ class _EnhancedInvoiceListScreenState extends State<EnhancedInvoiceListScreen> {
               width: 48,
               height: 48,
               decoration: BoxDecoration(
-                gradient: const LinearGradient(colors: [Color(0xFF4A148C), Color(0xFF6A1B9A)]),
+                gradient: const LinearGradient(colors: [Color(0xFF1B263B), Color(0xFF64FFDA)]),
                 borderRadius: BorderRadius.circular(8),
               ),
               child: invoice.imagePath != null
@@ -2195,7 +2235,7 @@ class _EnhancedInvoiceListScreenState extends State<EnhancedInvoiceListScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text('\$${invoice.amount.toStringAsFixed(2)}', 
-                     style: const TextStyle(color: Color(0xFF6A1B9A), fontSize: 16, fontWeight: FontWeight.bold)),
+                     style: const TextStyle(color: Color(0xFF64FFDA), fontSize: 16, fontWeight: FontWeight.bold)),
                 const SizedBox(height: 2),
                 Text('${invoice.date.day}/${invoice.date.month}/${invoice.date.year}', 
                      style: const TextStyle(color: Colors.white70, fontSize: 12)),
@@ -2384,7 +2424,7 @@ class _EnhancedInvoiceListScreenState extends State<EnhancedInvoiceListScreen> {
                   width: 48,
                   height: 48,
                   decoration: BoxDecoration(
-                    gradient: const LinearGradient(colors: [Color(0xFF6A1B9A), Color(0xFF4A148C)]),
+                    gradient: const LinearGradient(colors: [Color(0xFF64FFDA), Color(0xFF1B263B)]),
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: const Icon(Icons.receipt, color: Colors.white),
@@ -2395,7 +2435,7 @@ class _EnhancedInvoiceListScreenState extends State<EnhancedInvoiceListScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text('\$${(receipt['total'] ?? 0.0).toStringAsFixed(2)}', 
-                         style: const TextStyle(color: Color(0xFF6A1B9A), fontSize: 16, fontWeight: FontWeight.bold)),
+                         style: const TextStyle(color: Color(0xFF64FFDA), fontSize: 16, fontWeight: FontWeight.bold)),
                     const SizedBox(height: 2),
                     Text('Confidence: ${((receipt['confidence'] ?? 0.0) * 100).toStringAsFixed(0)}%', 
                          style: const TextStyle(color: Colors.white70, fontSize: 12)),
@@ -2765,10 +2805,10 @@ class _InvoiceEditScreenState extends State<InvoiceEditScreen> {
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
             colors: [
-              Color(0xFF000000),
-              Color(0xFF2E0249),
-              Color(0xFF4A148C),
-              Color(0xFF6A1B9A),
+              Color(0xFF0D1B2A),
+              Color(0xFF1B263B),
+              Color(0xFF415A77),
+              Color(0xFF64FFDA),
             ],
           ),
         ),
@@ -2866,7 +2906,7 @@ class _InvoiceEditScreenState extends State<InvoiceEditScreen> {
                   child: ElevatedButton(
                     onPressed: _isLoading ? null : _updateInvoice,
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF4A148C),
+                      backgroundColor: const Color(0xFF1B263B),
                       foregroundColor: Colors.white,
                       padding: const EdgeInsets.symmetric(vertical: 16),
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -2984,10 +3024,10 @@ class _FaceAuthSetupScreenState extends State<FaceAuthSetupScreen> {
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
             colors: [
-              Color(0xFF000000),
-              Color(0xFF2E0249),
-              Color(0xFF4A148C),
-              Color(0xFF6A1B9A),
+              Color(0xFF0D1B2A),
+              Color(0xFF1B263B),
+              Color(0xFF415A77),
+              Color(0xFF64FFDA),
             ],
           ),
         ),
@@ -3033,7 +3073,7 @@ class _FaceAuthSetupScreenState extends State<FaceAuthSetupScreen> {
                           ),
                           Text(
                             '$_currentSample/$_totalSamples',
-                            style: const TextStyle(color: Color(0xFF6A1B9A), fontSize: 16, fontWeight: FontWeight.bold),
+                            style: const TextStyle(color: Color(0xFF64FFDA), fontSize: 16, fontWeight: FontWeight.bold),
                           ),
                         ],
                       ),
@@ -3050,7 +3090,7 @@ class _FaceAuthSetupScreenState extends State<FaceAuthSetupScreen> {
                               color: _sampleCompleted[index] 
                                   ? Colors.green 
                                   : index == _currentSample 
-                                      ? const Color(0xFF6A1B9A)
+                                      ? const Color(0xFF64FFDA)
                                       : Colors.grey.withValues(alpha: 0.3),
                               borderRadius: BorderRadius.circular(25),
                               border: Border.all(
@@ -3080,7 +3120,7 @@ class _FaceAuthSetupScreenState extends State<FaceAuthSetupScreen> {
                       LinearProgressIndicator(
                         value: _currentSample / _totalSamples,
                         backgroundColor: Colors.grey.withValues(alpha: 0.3),
-                        valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFF6A1B9A)),
+                        valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFF64FFDA)),
                       ),
                     ],
                   ),
@@ -3102,7 +3142,7 @@ class _FaceAuthSetupScreenState extends State<FaceAuthSetupScreen> {
                     children: [
                       const Row(
                         children: [
-                          Icon(Icons.info, color: Color(0xFF6A1B9A)),
+                          Icon(Icons.info, color: Color(0xFF64FFDA)),
                           SizedBox(width: 8),
                           Text(
                             'Instructions',
@@ -3125,7 +3165,7 @@ class _FaceAuthSetupScreenState extends State<FaceAuthSetupScreen> {
                                   color: _sampleCompleted[index] 
                                       ? Colors.green 
                                       : index == _currentSample 
-                                          ? const Color(0xFF6A1B9A)
+                                          ? const Color(0xFF64FFDA)
                                           : Colors.grey.withValues(alpha: 0.3),
                                   borderRadius: BorderRadius.circular(12),
                                 ),
@@ -3172,7 +3212,7 @@ class _FaceAuthSetupScreenState extends State<FaceAuthSetupScreen> {
                   decoration: BoxDecoration(
                     color: const Color(0xFF2E0249).withValues(alpha: 0.5),
                     borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: const Color(0xFF6A1B9A).withValues(alpha: 0.5)),
+                    border: Border.all(color: const Color(0xFF64FFDA).withValues(alpha: 0.5)),
                   ),
                   child: Text(
                     _statusMessage,
@@ -3189,7 +3229,7 @@ class _FaceAuthSetupScreenState extends State<FaceAuthSetupScreen> {
                   child: ElevatedButton(
                     onPressed: _isEnrolling ? null : _startEnrollment,
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF4A148C),
+                      backgroundColor: const Color(0xFF1B263B),
                       foregroundColor: Colors.white,
                       padding: const EdgeInsets.symmetric(vertical: 16),
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -3266,8 +3306,8 @@ class _AuthWrapperState extends State<AuthWrapper> {
               colors: [
                 Color(0xFF000000),
                 Color(0xFF2E0249),
-                Color(0xFF4A148C),
-                Color(0xFF6A1B9A),
+                Color(0xFF1B263B),
+                Color(0xFF64FFDA),
               ],
             ),
           ),
@@ -3278,7 +3318,7 @@ class _AuthWrapperState extends State<AuthWrapper> {
                 Container(
                   padding: const EdgeInsets.all(20),
                   decoration: BoxDecoration(
-                    gradient: const LinearGradient(colors: [Color(0xFF4A148C), Color(0xFF6A1B9A)]),
+                    gradient: const LinearGradient(colors: [Color(0xFF1B263B), Color(0xFF64FFDA)]),
                     borderRadius: BorderRadius.circular(20),
                   ),
                   child: const Icon(Icons.psychology, size: 64, color: Colors.white),
@@ -3359,10 +3399,10 @@ class _LoginSelectionScreenState extends State<LoginSelectionScreen> {
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
             colors: [
-              Color(0xFF000000),
-              Color(0xFF2E0249),
-              Color(0xFF4A148C),
-              Color(0xFF6A1B9A),
+              Color(0xFF0D1B2A),
+              Color(0xFF1B263B),
+              Color(0xFF415A77),
+              Color(0xFF64FFDA),
             ],
           ),
         ),
@@ -3376,7 +3416,7 @@ class _LoginSelectionScreenState extends State<LoginSelectionScreen> {
                   Container(
                     padding: const EdgeInsets.all(20),
                     decoration: BoxDecoration(
-                      gradient: const LinearGradient(colors: [Color(0xFF4A148C), Color(0xFF6A1B9A)]),
+                      gradient: const LinearGradient(colors: [Color(0xFF1B263B), Color(0xFF64FFDA)]),
                       borderRadius: BorderRadius.circular(20),
                     ),
                     child: const Icon(Icons.psychology, size: 64, color: Colors.white),
@@ -3392,7 +3432,7 @@ class _LoginSelectionScreenState extends State<LoginSelectionScreen> {
                     child: ElevatedButton.icon(
                       onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (context) => const LoginScreen())),
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF4A148C),
+                        backgroundColor: const Color(0xFF1B263B),
                         foregroundColor: Colors.white,
                         padding: const EdgeInsets.symmetric(vertical: 16),
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
@@ -3405,61 +3445,63 @@ class _LoginSelectionScreenState extends State<LoginSelectionScreen> {
                   
                   const SizedBox(height: 16),
                   
-                  if (widget.hasBiometricCapability) ...[
-                    SizedBox(
-                      width: double.infinity,
-                      child: OutlinedButton.icon(
-                        onPressed: () => _loginWithBiometric(context),
-                        style: OutlinedButton.styleFrom(
-                          side: const BorderSide(color: Colors.white, width: 2),
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(vertical: 16),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-                        ),
-                        icon: const Icon(Icons.fingerprint, color: Colors.white),
-                        label: const Text('Login with Biometric', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                  ],
+                  // BIOMETRIC LOGIN - TEMPORARILY COMMENTED OUT
+                  // if (widget.hasBiometricCapability) ...[
+                  //   SizedBox(
+                  //     width: double.infinity,
+                  //     child: OutlinedButton.icon(
+                  //       onPressed: () => _loginWithBiometric(context),
+                  //       style: OutlinedButton.styleFrom(
+                  //         side: const BorderSide(color: Colors.white, width: 2),
+                  //         foregroundColor: Colors.white,
+                  //         padding: const EdgeInsets.symmetric(vertical: 16),
+                  //         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+                  //       ),
+                  //       icon: const Icon(Icons.fingerprint, color: Colors.white),
+                  //       label: const Text('Login with Biometric', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+                  //     ),
+                  //   ),
+                  //   const SizedBox(height: 16),
+                  // ],
                   
                   SizedBox(
                     width: double.infinity,
                     child: OutlinedButton.icon(
                       onPressed: () => _loginWithFace(context),
                       style: OutlinedButton.styleFrom(
-                        side: const BorderSide(color: Color(0xFF6A1B9A), width: 2),
-                        foregroundColor: const Color(0xFF6A1B9A),
+                        side: const BorderSide(color: Color(0xFF64FFDA), width: 2),
+                        foregroundColor: const Color(0xFF64FFDA),
                         padding: const EdgeInsets.symmetric(vertical: 16),
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
                       ),
-                      icon: const Icon(Icons.face, color: Color(0xFF6A1B9A)),
-                      label: const Text('Login with Face', style: TextStyle(color: Color(0xFF6A1B9A), fontSize: 16, fontWeight: FontWeight.bold)),
+                      icon: const Icon(Icons.face, color: Color(0xFF64FFDA)),
+                      label: const Text('Login with Face', style: TextStyle(color: Color(0xFF64FFDA), fontSize: 16, fontWeight: FontWeight.bold)),
                     ),
                   ),
                   
-                  if (widget.hasBiometricCapability) ...[
-                    const SizedBox(height: 16),
-                    Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                        color: Colors.grey.withOpacity(0.2),
-                        borderRadius: BorderRadius.circular(15),
-                      ),
-                      child: const Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(Icons.info, color: Colors.white70, size: 20),
-                          SizedBox(width: 8),
-                          Text(
-                            'Biometric authentication not available',
-                            style: TextStyle(color: Colors.white70, fontSize: 14),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
+                  // BIOMETRIC STATUS - TEMPORARILY COMMENTED OUT
+                  // if (widget.hasBiometricCapability) ...[
+                  //   const SizedBox(height: 16),
+                  //   Container(
+                  //     width: double.infinity,
+                  //     padding: const EdgeInsets.all(16),
+                  //     decoration: BoxDecoration(
+                  //       color: Colors.grey.withOpacity(0.2),
+                  //       borderRadius: BorderRadius.circular(15),
+                  //     ),
+                  //     child: const Row(
+                  //       mainAxisAlignment: MainAxisAlignment.center,
+                  //       children: [
+                  //         Icon(Icons.info, color: Colors.white70, size: 20),
+                  //         SizedBox(width: 8),
+                  //         Text(
+                  //           'Biometric authentication not available',
+                  //           style: TextStyle(color: Colors.white70, fontSize: 14),
+                  //         ),
+                  //       ],
+                  //     ),
+                  //   ),
+                  // ],
                 ],
               ),
             ),
@@ -3543,10 +3585,10 @@ class _LoginScreenState extends State<LoginScreen> {
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
             colors: [
-              Color(0xFF000000),
-              Color(0xFF2E0249),
-              Color(0xFF4A148C),
-              Color(0xFF6A1B9A),
+              Color(0xFF0D1B2A),
+              Color(0xFF1B263B),
+              Color(0xFF415A77),
+              Color(0xFF64FFDA),
             ],
           ),
         ),
@@ -3562,7 +3604,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     Container(
                       padding: const EdgeInsets.all(20),
                       decoration: BoxDecoration(
-                        gradient: const LinearGradient(colors: [Color(0xFF4A148C), Color(0xFF6A1B9A)]),
+                        gradient: const LinearGradient(colors: [Color(0xFF1B263B), Color(0xFF64FFDA)]),
                         borderRadius: BorderRadius.circular(20),
                       ),
                       child: const Icon(Icons.psychology, size: 64, color: Colors.white),
@@ -3667,7 +3709,7 @@ class _LoginScreenState extends State<LoginScreen> {
                       child: ElevatedButton(
                         onPressed: _isLoading ? null : _login,
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFF4A148C),
+                          backgroundColor: const Color(0xFF1B263B),
                           foregroundColor: Colors.white,
                           padding: const EdgeInsets.symmetric(vertical: 16),
                           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
@@ -3786,7 +3828,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
             Container(
               padding: const EdgeInsets.all(8),
               decoration: BoxDecoration(
-                gradient: const LinearGradient(colors: [Color(0xFF4A148C), Color(0xFF6A1B9A)]),
+                gradient: const LinearGradient(colors: [Color(0xFF1B263B), Color(0xFF64FFDA)]),
                 borderRadius: BorderRadius.circular(8),
               ),
               child: const Icon(Icons.psychology, color: Colors.white, size: 20),
@@ -3877,10 +3919,10 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
             colors: [
-              Color(0xFF000000),
-              Color(0xFF2E0249),
-              Color(0xFF4A148C),
-              Color(0xFF6A1B9A),
+              Color(0xFF0D1B2A),
+              Color(0xFF1B263B),
+              Color(0xFF415A77),
+              Color(0xFF64FFDA),
             ],
           ),
         ),
@@ -3896,7 +3938,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
           onTap: (index) => setState(() => _selectedIndex = index),
           type: BottomNavigationBarType.fixed,
           backgroundColor: Colors.transparent,
-          selectedItemColor: const Color(0xFF6A1B9A),
+          selectedItemColor: const Color(0xFF64FFDA),
           unselectedItemColor: Colors.white54,
           elevation: 0,
           items: navigationItems.map((item) => BottomNavigationBarItem(
@@ -3919,7 +3961,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
                   setState(() {});
                 }
               },
-              backgroundColor: const Color(0xFF4A148C),
+              backgroundColor: const Color(0xFF1B263B),
               child: const Icon(Icons.add, color: Colors.white),
             )
           : null,
@@ -4062,7 +4104,7 @@ class _InvoiceListScreenState extends State<InvoiceListScreen> {
                       ElevatedButton(
                         onPressed: _loadInvoices,
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFF4A148C),
+                          backgroundColor: const Color(0xFF1B263B),
                           foregroundColor: Colors.white,
                         ),
                         child: const Text('Retry', style: TextStyle(color: Colors.white)),
@@ -4116,7 +4158,7 @@ class _InvoiceListScreenState extends State<InvoiceListScreen> {
                                       width: 48,
                                       height: 48,
                                       decoration: BoxDecoration(
-                                        gradient: const LinearGradient(colors: [Color(0xFF4A148C), Color(0xFF6A1B9A)]),
+                                        gradient: const LinearGradient(colors: [Color(0xFF1B263B), Color(0xFF64FFDA)]),
                                         borderRadius: BorderRadius.circular(8),
                                       ),
                                       child: invoice.imagePath != null
@@ -4136,7 +4178,7 @@ class _InvoiceListScreenState extends State<InvoiceListScreen> {
                                       crossAxisAlignment: CrossAxisAlignment.start,
                                       children: [
                                         Text('\$${invoice.amount.toStringAsFixed(2)}', 
-                                             style: const TextStyle(color: Color(0xFF6A1B9A), fontSize: 16, fontWeight: FontWeight.bold)),
+                                             style: const TextStyle(color: Color(0xFF64FFDA), fontSize: 16, fontWeight: FontWeight.bold)),
                                         const SizedBox(height: 2),
                                         Text('${invoice.date.day}/${invoice.date.month}/${invoice.date.year}', 
                                              style: const TextStyle(color: Colors.white70, fontSize: 12)),
@@ -4232,7 +4274,7 @@ class _InvoiceCreateScreenState extends State<InvoiceCreateScreen> {
         return Theme(
           data: Theme.of(context).copyWith(
             colorScheme: const ColorScheme.dark(
-              primary: Color(0xFF4A148C),
+              primary: Color(0xFF1B263B),
               onPrimary: Colors.white,
               surface: Color(0xFF1A1A1A),
               onSurface: Colors.white,
@@ -4259,7 +4301,7 @@ class _InvoiceCreateScreenState extends State<InvoiceCreateScreen> {
         return Theme(
           data: Theme.of(context).copyWith(
             colorScheme: const ColorScheme.dark(
-              primary: Color(0xFF4A148C),
+              primary: Color(0xFF1B263B),
               onPrimary: Colors.white,
               surface: Color(0xFF1A1A1A),
               onSurface: Colors.white,
@@ -4286,7 +4328,7 @@ class _InvoiceCreateScreenState extends State<InvoiceCreateScreen> {
           mainAxisSize: MainAxisSize.min,
           children: [
             ListTile(
-              leading: const Icon(Icons.camera_alt, color: Color(0xFF4A148C)),
+              leading: const Icon(Icons.camera_alt, color: Color(0xFF1B263B)),
               title: const Text('Take Photo', style: TextStyle(color: Colors.white)),
               onTap: () async {
                 Navigator.pop(context);
@@ -4299,7 +4341,7 @@ class _InvoiceCreateScreenState extends State<InvoiceCreateScreen> {
               },
             ),
             ListTile(
-              leading: const Icon(Icons.photo_library, color: Color(0xFF4A148C)),
+              leading: const Icon(Icons.photo_library, color: Color(0xFF1B263B)),
               title: const Text('Choose from Gallery', style: TextStyle(color: Colors.white)),
               onTap: () async {
                 Navigator.pop(context);
@@ -4385,10 +4427,10 @@ class _InvoiceCreateScreenState extends State<InvoiceCreateScreen> {
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
             colors: [
-              Color(0xFF000000),
-              Color(0xFF2E0249),
-              Color(0xFF4A148C),
-              Color(0xFF6A1B9A),
+              Color(0xFF0D1B2A),
+              Color(0xFF1B263B),
+              Color(0xFF415A77),
+              Color(0xFF64FFDA),
             ],
           ),
         ),
@@ -4426,7 +4468,7 @@ class _InvoiceCreateScreenState extends State<InvoiceCreateScreen> {
                             ElevatedButton.icon(
                               onPressed: _showImageSourceDialog,
                               style: ElevatedButton.styleFrom(
-                                backgroundColor: const Color(0xFF4A148C),
+                                backgroundColor: const Color(0xFF1B263B),
                                 foregroundColor: Colors.white,
                               ),
                               icon: const Icon(Icons.camera_alt, color: Colors.white),
@@ -4441,8 +4483,8 @@ class _InvoiceCreateScreenState extends State<InvoiceCreateScreen> {
                   Center(
                     child: TextButton.icon(
                       onPressed: _showImageSourceDialog,
-                      icon: const Icon(Icons.edit, color: Color(0xFF6A1B9A)),
-                      label: const Text('Change Image', style: TextStyle(color: Color(0xFF6A1B9A))),
+                      icon: const Icon(Icons.edit, color: Color(0xFF64FFDA)),
+                      label: const Text('Change Image', style: TextStyle(color: Color(0xFF64FFDA))),
                     ),
                   ),
                 ],
@@ -4664,7 +4706,7 @@ class _InvoiceCreateScreenState extends State<InvoiceCreateScreen> {
                   child: ElevatedButton(
                     onPressed: _isLoading ? null : _createInvoice,
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF4A148C),
+                      backgroundColor: const Color(0xFF1B263B),
                       foregroundColor: Colors.white,
                       padding: const EdgeInsets.symmetric(vertical: 16),
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -4710,10 +4752,10 @@ class InvoiceDetailScreen extends StatelessWidget {
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
             colors: [
-              Color(0xFF000000),
-              Color(0xFF2E0249),
-              Color(0xFF4A148C),
-              Color(0xFF6A1B9A),
+              Color(0xFF0D1B2A),
+              Color(0xFF1B263B),
+              Color(0xFF415A77),
+              Color(0xFF64FFDA),
             ],
           ),
         ),
@@ -5010,7 +5052,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 const SizedBox(width: 8),
                 Container(
                   decoration: BoxDecoration(
-                    gradient: const LinearGradient(colors: [Color(0xFF4A148C), Color(0xFF6A1B9A)]),
+                    gradient: const LinearGradient(colors: [Color(0xFF1B263B), Color(0xFF64FFDA)]),
                     borderRadius: BorderRadius.circular(20),
                   ),
                   child: ElevatedButton(
@@ -5053,8 +5095,8 @@ class MessageBubble extends StatelessWidget {
                 gradient: message.type == MessageType.error
                     ? LinearGradient(colors: [Colors.red, Colors.red.shade700])
                     : message.type == MessageType.system
-                        ? const LinearGradient(colors: [Color(0xFF4A148C), Color(0xFF2E0249)])
-                        : const LinearGradient(colors: [Color(0xFF4A148C), Color(0xFF6A1B9A)]),
+                        ? const LinearGradient(colors: [Color(0xFF1B263B), Color(0xFF0D1B2A)])
+                        : const LinearGradient(colors: [Color(0xFF1B263B), Color(0xFF64FFDA)]),
                 borderRadius: BorderRadius.circular(16),
               ),
               child: Icon(
@@ -5079,7 +5121,7 @@ class MessageBubble extends StatelessWidget {
                   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                   decoration: BoxDecoration(
                     gradient: message.type == MessageType.user
-                        ? const LinearGradient(colors: [Color(0xFF4A148C), Color(0xFF6A1B9A)])
+                        ? const LinearGradient(colors: [Color(0xFF1B263B), Color(0xFF64FFDA)])
                         : null,
                     color: message.type == MessageType.user
                         ? null
@@ -5409,7 +5451,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     child: ElevatedButton.icon(
                       onPressed: _isLoading ? null : (_isFaceAuthEnabled ? null : _setupFaceAuth),
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: _isFaceAuthEnabled ? Colors.grey : const Color(0xFF6A1B9A),
+                        backgroundColor: _isFaceAuthEnabled ? Colors.grey : const Color(0xFF64FFDA),
                         foregroundColor: Colors.white,
                         padding: const EdgeInsets.symmetric(vertical: 12),
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
@@ -5476,7 +5518,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       child: ElevatedButton.icon(
                         onPressed: _isLoading ? null : _toggleBiometricLogin,
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: _isBiometricEnabled ? Colors.red : const Color(0xFF4A148C),
+                          backgroundColor: _isBiometricEnabled ? Colors.red : const Color(0xFF1B263B),
                           foregroundColor: Colors.white,
                           padding: const EdgeInsets.symmetric(vertical: 12),
                           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
@@ -5537,7 +5579,7 @@ class SettingsScreen extends StatelessWidget {
           Container(
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
-              gradient: const LinearGradient(colors: [Color(0xFF4A148C), Color(0xFF6A1B9A)]),
+              gradient: const LinearGradient(colors: [Color(0xFF1B263B), Color(0xFF64FFDA)]),
               borderRadius: BorderRadius.circular(16),
             ),
             child: const Icon(Icons.settings, size: 64, color: Colors.white),
@@ -5633,7 +5675,7 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                       ElevatedButton(
                         onPressed: _loadUsers,
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFF4A148C),
+                          backgroundColor: const Color(0xFF1B263B),
                           foregroundColor: Colors.white,
                         ),
                         child: const Text('Retry', style: TextStyle(color: Colors.white)),
