@@ -200,9 +200,9 @@ class DatabaseAssistant:
                             'matched_sample': user_data['sample_number']
                         }
                 
-                # Enhanced security checks beyond just confidence threshold
-                if best_match and best_confidence >= 0.85:
-                    # SECURITY ENHANCEMENT 1: Require matching against multiple samples
+                # Enhanced but balanced security checks
+                if best_match and best_confidence >= 0.82:  # Slightly lower main threshold
+                    # SECURITY ENHANCEMENT 1: Smart multi-sample verification (only for users with many samples)
                     user_id = best_match['user_id']
                     cursor.execute("""
                         SELECT COUNT(*) FROM face_recognition_data
@@ -210,8 +210,8 @@ class DatabaseAssistant:
                     """, (user_id,))
                     total_samples = cursor.fetchone()[0]
 
-                    if total_samples >= 3:  # Only if user has multiple samples
-                        # Calculate match rate across all samples for this user
+                    # Only apply multi-sample check if user has 4+ samples
+                    if total_samples >= 4:
                         matches_above_threshold = 0
                         for sample_record in enrolled_samples:
                             sample_user_id, stored_encoding, _, _, _, _ = sample_record
@@ -221,15 +221,16 @@ class DatabaseAssistant:
                                     sample_confidence = self._calculate_face_similarity(
                                         features_data, stored_features
                                     )
-                                    if sample_confidence >= 0.80:  # Slightly lower threshold for individual samples
+                                    # More forgiving threshold for individual samples
+                                    if sample_confidence >= 0.75:
                                         matches_above_threshold += 1
                                 except (json.JSONDecodeError, Exception):
                                     continue
 
                         match_rate = matches_above_threshold / total_samples
 
-                        # SECURITY ENHANCEMENT 2: Require 60% of samples to match
-                        if match_rate < 0.6:
+                        # More forgiving: require 40% of samples to match (not 60%)
+                        if match_rate < 0.4:
                             return {
                                 'success': False,
                                 'message': 'Face verification failed - insufficient sample matches',
@@ -238,16 +239,7 @@ class DatabaseAssistant:
                                 'security_level': 'enhanced'
                             }
 
-                    # SECURITY ENHANCEMENT 3: Quality and consistency checks
-                    feature_quality_score = self._assess_feature_quality(features_data)
-                    if feature_quality_score < 0.7:
-                        return {
-                            'success': False,
-                            'message': 'Face image quality too low for secure authentication',
-                            'confidence': best_confidence,
-                            'quality_score': feature_quality_score,
-                            'security_level': 'enhanced'
-                        }
+                    # Quality check removed - rely on confidence threshold only
                     # Update last used timestamp for all samples of this user
                     cursor.execute("""
                         UPDATE face_recognition_data 
