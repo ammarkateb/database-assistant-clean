@@ -172,11 +172,19 @@ class DatabaseAssistant:
                         
                         # Calculate confidence for this sample
                         confidence = self._calculate_face_similarity(features_data, stored_features)
-                        
-                        # Track the best confidence for each user across all their samples
-                        if user_id not in user_confidences or confidence > user_confidences[user_id]['confidence']:
+
+                        # Calculate geometric distance for enhanced security
+                        geometric_similarity = self._calculate_geometric_distance(features_data, stored_features)
+
+                        # Combined score: 70% confidence + 30% geometric similarity
+                        combined_score = (confidence * 0.7) + (geometric_similarity * 0.3)
+
+                        # Track the best combined score for each user across all their samples
+                        if user_id not in user_confidences or combined_score > user_confidences[user_id]['confidence']:
                             user_confidences[user_id] = {
-                                'confidence': confidence,
+                                'confidence': combined_score,
+                                'raw_confidence': confidence,
+                                'geometric_similarity': geometric_similarity,
                                 'username': username,
                                 'full_name': full_name,
                                 'role': role,
@@ -221,8 +229,14 @@ class DatabaseAssistant:
                                     sample_confidence = self._calculate_face_similarity(
                                         features_data, stored_features
                                     )
+                                    sample_geometric = self._calculate_geometric_distance(
+                                        features_data, stored_features
+                                    )
+                                    # Combined score for multi-sample check
+                                    sample_combined = (sample_confidence * 0.7) + (sample_geometric * 0.3)
+
                                     # More forgiving threshold for individual samples
-                                    if sample_confidence >= 0.75:
+                                    if sample_combined >= 0.75:
                                         matches_above_threshold += 1
                                 except (json.JSONDecodeError, Exception):
                                     continue
@@ -486,6 +500,122 @@ class DatabaseAssistant:
 
         except Exception as e:
             logger.error(f"Error assessing feature quality: {e}")
+            return 0.5  # Conservative fallback
+
+    def _calculate_geometric_distance(self, features1: Dict, features2: Dict) -> float:
+        """Calculate geometric distance between facial features for enhanced security"""
+        try:
+            distance_factors = []
+
+            # 1. Eye spacing ratio check
+            if ('landmarks' in features1 and 'landmarks' in features2 and
+                'leftEye' in features1['landmarks'] and 'rightEye' in features1['landmarks'] and
+                'leftEye' in features2['landmarks'] and 'rightEye' in features2['landmarks']):
+
+                try:
+                    # Calculate eye spacing for both faces
+                    left1, right1 = features1['landmarks']['leftEye'], features1['landmarks']['rightEye']
+                    left2, right2 = features2['landmarks']['leftEye'], features2['landmarks']['rightEye']
+
+                    spacing1 = abs(float(right1['x']) - float(left1['x']))
+                    spacing2 = abs(float(right2['x']) - float(left2['x']))
+
+                    if spacing1 > 0 and spacing2 > 0:
+                        spacing_ratio = min(spacing1, spacing2) / max(spacing1, spacing2)
+                        distance_factors.append(('eye_spacing', spacing_ratio, 0.3))
+                except (KeyError, ValueError, TypeError):
+                    pass
+
+            # 2. Face aspect ratio check
+            if 'bounding_box' in features1 and 'bounding_box' in features2:
+                try:
+                    bb1, bb2 = features1['bounding_box'], features2['bounding_box']
+                    if ('width' in bb1 and 'height' in bb1 and
+                        'width' in bb2 and 'height' in bb2):
+
+                        ratio1 = float(bb1['width']) / float(bb1['height'])
+                        ratio2 = float(bb2['width']) / float(bb2['height'])
+
+                        if ratio1 > 0 and ratio2 > 0:
+                            aspect_similarity = min(ratio1, ratio2) / max(ratio1, ratio2)
+                            distance_factors.append(('face_aspect', aspect_similarity, 0.2))
+                except (KeyError, ValueError, TypeError):
+                    pass
+
+            # 3. Nose-to-mouth distance proportion
+            if ('landmarks' in features1 and 'landmarks' in features2 and
+                'noseBase' in features1['landmarks'] and 'bottomMouth' in features1['landmarks'] and
+                'noseBase' in features2['landmarks'] and 'bottomMouth' in features2['landmarks']):
+
+                try:
+                    nose1, mouth1 = features1['landmarks']['noseBase'], features1['landmarks']['bottomMouth']
+                    nose2, mouth2 = features2['landmarks']['noseBase'], features2['landmarks']['bottomMouth']
+
+                    dist1 = ((float(mouth1['x']) - float(nose1['x']))**2 +
+                            (float(mouth1['y']) - float(nose1['y']))**2)**0.5
+                    dist2 = ((float(mouth2['x']) - float(nose2['x']))**2 +
+                            (float(mouth2['y']) - float(nose2['y']))**2)**0.5
+
+                    if dist1 > 0 and dist2 > 0:
+                        nose_mouth_similarity = min(dist1, dist2) / max(dist1, dist2)
+                        distance_factors.append(('nose_mouth', nose_mouth_similarity, 0.2))
+                except (KeyError, ValueError, TypeError):
+                    pass
+
+            # 4. Overall landmark constellation check
+            if 'landmarks' in features1 and 'landmarks' in features2:
+                try:
+                    # Get center of face for both
+                    lm1, lm2 = features1['landmarks'], features2['landmarks']
+                    common_landmarks = set(lm1.keys()) & set(lm2.keys())
+
+                    if len(common_landmarks) >= 3:
+                        # Calculate centroid for normalization
+                        centroid1_x = sum(float(lm1[lm]['x']) for lm in common_landmarks) / len(common_landmarks)
+                        centroid1_y = sum(float(lm1[lm]['y']) for lm in common_landmarks) / len(common_landmarks)
+                        centroid2_x = sum(float(lm2[lm]['x']) for lm in common_landmarks) / len(common_landmarks)
+                        centroid2_y = sum(float(lm2[lm]['y']) for lm in common_landmarks) / len(common_landmarks)
+
+                        # Calculate normalized distances from centroid
+                        constellation_similarity = 0.0
+                        valid_landmarks = 0
+
+                        for landmark in common_landmarks:
+                            try:
+                                # Normalize by distance from centroid
+                                norm_dist1 = ((float(lm1[landmark]['x']) - centroid1_x)**2 +
+                                            (float(lm1[landmark]['y']) - centroid1_y)**2)**0.5
+                                norm_dist2 = ((float(lm2[landmark]['x']) - centroid2_x)**2 +
+                                            (float(lm2[landmark]['y']) - centroid2_y)**2)**0.5
+
+                                if norm_dist1 > 1 and norm_dist2 > 1:  # Avoid division by very small numbers
+                                    dist_similarity = min(norm_dist1, norm_dist2) / max(norm_dist1, norm_dist2)
+                                    constellation_similarity += dist_similarity
+                                    valid_landmarks += 1
+                            except (ValueError, TypeError):
+                                continue
+
+                        if valid_landmarks > 0:
+                            constellation_similarity /= valid_landmarks
+                            distance_factors.append(('constellation', constellation_similarity, 0.3))
+
+                except (KeyError, ValueError, TypeError):
+                    pass
+
+            # Calculate weighted geometric similarity
+            if distance_factors:
+                weighted_sum = sum(score * weight for _, score, weight in distance_factors)
+                total_weight = sum(weight for _, _, weight in distance_factors)
+
+                if total_weight > 0:
+                    geometric_similarity = weighted_sum / total_weight
+                    return max(0.0, min(1.0, geometric_similarity))
+
+            # Fallback to basic similarity if no geometric factors available
+            return 0.7  # Neutral score
+
+        except Exception as e:
+            logger.error(f"Error calculating geometric distance: {e}")
             return 0.5  # Conservative fallback
 
 
