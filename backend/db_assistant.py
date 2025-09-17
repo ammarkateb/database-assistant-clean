@@ -1008,6 +1008,13 @@ CRITICAL INSTRUCTIONS:
 6. Be precise with SQL - use exact PostgreSQL syntax
 7. Provide natural, conversational responses that reference previous discussions when relevant
 8. If the user asks follow-up questions, understand they're building on previous queries
+9. **CRITICAL MATH VALIDATION**: For average calculations:
+   - Monthly average = Total annual sales ÷ 12 months
+   - Use: SELECT SUM(total_amount)/12 as monthly_average FROM invoices WHERE EXTRACT(YEAR FROM invoice_date) = YEAR
+   - Example: $26,000,000 annual ÷ 12 = $2,166,667 monthly average (NOT $7,000!)
+   - Always double-check mathematical logic before generating SQL
+   - For averages across months: SELECT AVG(monthly_total) FROM (SELECT SUM(total_amount) as monthly_total FROM invoices GROUP BY EXTRACT(YEAR FROM invoice_date), EXTRACT(MONTH FROM invoice_date))
+10. Validate all mathematical operations - division, averages, percentages must be logically correct
 
 ROLE PERMISSIONS:
 - Visitor: Only sales/invoices data
@@ -1199,6 +1206,41 @@ Generate your response in valid JSON format:
                 "suggested_chart": "none"
             }
         
+        # Sales queries with math validation
+        elif any(word in user_lower for word in ['sales', 'revenue']) and any(word in user_lower for word in ['average', 'monthly']):
+            if 'monthly' in user_lower and any(word in user_lower for word in ['2025', '2024', '2023']):
+                year = None
+                if '2025' in user_lower:
+                    year = 2025
+                elif '2024' in user_lower:
+                    year = 2024
+                elif '2023' in user_lower:
+                    year = 2023
+
+                if year:
+                    return {
+                        "needs_sql": True,
+                        "sql_query": f"SELECT SUM(total_amount)/12 as monthly_average FROM invoices WHERE EXTRACT(YEAR FROM invoice_date) = {year}",
+                        "response_message": f"The average monthly sales for {year} is $[VALUE] (calculated as total annual sales ÷ 12 months).",
+                        "suggested_chart": "none"
+                    }
+            elif 'total' in user_lower and any(word in user_lower for word in ['2025', '2024', '2023']):
+                year = None
+                if '2025' in user_lower:
+                    year = 2025
+                elif '2024' in user_lower:
+                    year = 2024
+                elif '2023' in user_lower:
+                    year = 2023
+
+                if year:
+                    return {
+                        "needs_sql": True,
+                        "sql_query": f"SELECT SUM(total_amount) as annual_total FROM invoices WHERE EXTRACT(YEAR FROM invoice_date) = {year}",
+                        "response_message": f"Total sales for {year} is $[VALUE].",
+                        "suggested_chart": "none"
+                    }
+
         # Chart requests for sales
         elif any(word in user_lower for word in ['chart', 'bar chart', 'pie chart']) and 'sales' in user_lower:
             if 'month' in user_lower:
