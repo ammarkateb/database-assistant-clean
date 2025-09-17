@@ -501,9 +501,10 @@ class DatabaseAssistant:
         """Load environment variables"""
         load_dotenv()
         self.api_key = os.getenv("GOOGLE_API_KEY")
+        # Don't fail if API key is missing - just log a warning
         if not self.api_key:
-            raise ValueError("GOOGLE_API_KEY not found in environment variables!")
-        
+            logger.warning("GOOGLE_API_KEY not found - AI features will be disabled")
+
         self.db_params = {
             "dbname": os.getenv("DB_NAME", "postgres"),
             "user": os.getenv("DB_USER", "postgres.chdjmbylbqdsavazecll"),
@@ -515,15 +516,20 @@ class DatabaseAssistant:
     
     def setup_ai_model(self):
         """Setup Gemini AI model"""
-        genai.configure(api_key=self.api_key)
-        self.model = genai.GenerativeModel('gemini-1.5-flash')
-        
+        if not self.api_key:
+            logger.warning("No API key available - AI model will not be initialized")
+            self.model = None
+            return
+
         try:
+            genai.configure(api_key=self.api_key)
+            self.model = genai.GenerativeModel('gemini-1.5-flash')
             test_response = self.model.generate_content("Test connection")
             logger.info("Gemini AI model connected successfully")
         except Exception as e:
             logger.error(f"Failed to connect to Gemini: {e}")
-            raise
+            logger.warning("AI features will be disabled")
+            self.model = None
     
     def setup_database_pool(self):
         """Setup database connection pool"""
@@ -1104,6 +1110,11 @@ class DatabaseAssistant:
     def process_with_gemini_for_role(self, user_input: str, role: str, conversation_history: List[Dict] = None) -> Dict[str, Any]:
         """Process user input with Gemini AI including conversation memory - ENHANCED VERSION"""
         try:
+            # If AI model is not available, use fallback
+            if not self.model:
+                logger.warning("AI model not available, using fallback response")
+                return self._get_fallback_response_with_context(user_input, role, conversation_history)
+
             schema = self.get_database_schema_for_role(role)
             
             # Build conversation context
