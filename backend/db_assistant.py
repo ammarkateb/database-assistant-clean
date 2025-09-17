@@ -200,8 +200,54 @@ class DatabaseAssistant:
                             'matched_sample': user_data['sample_number']
                         }
                 
-                # Check if best match meets the 0.85 confidence threshold (balanced security)
+                # Enhanced security checks beyond just confidence threshold
                 if best_match and best_confidence >= 0.85:
+                    # SECURITY ENHANCEMENT 1: Require matching against multiple samples
+                    user_id = best_match['user_id']
+                    cursor.execute("""
+                        SELECT COUNT(*) FROM face_recognition_data
+                        WHERE user_id = %s AND is_active = true
+                    """, (user_id,))
+                    total_samples = cursor.fetchone()[0]
+
+                    if total_samples >= 3:  # Only if user has multiple samples
+                        # Calculate match rate across all samples for this user
+                        matches_above_threshold = 0
+                        for sample_record in enrolled_samples:
+                            sample_user_id, stored_encoding, _, _, _, _ = sample_record
+                            if sample_user_id == user_id:
+                                try:
+                                    stored_features = json.loads(stored_encoding)
+                                    sample_confidence = self._calculate_face_similarity(
+                                        features_data, stored_features
+                                    )
+                                    if sample_confidence >= 0.80:  # Slightly lower threshold for individual samples
+                                        matches_above_threshold += 1
+                                except (json.JSONDecodeError, Exception):
+                                    continue
+
+                        match_rate = matches_above_threshold / total_samples
+
+                        # SECURITY ENHANCEMENT 2: Require 60% of samples to match
+                        if match_rate < 0.6:
+                            return {
+                                'success': False,
+                                'message': 'Face verification failed - insufficient sample matches',
+                                'confidence': best_confidence,
+                                'match_rate': match_rate,
+                                'security_level': 'enhanced'
+                            }
+
+                    # SECURITY ENHANCEMENT 3: Quality and consistency checks
+                    feature_quality_score = self._assess_feature_quality(features_data)
+                    if feature_quality_score < 0.7:
+                        return {
+                            'success': False,
+                            'message': 'Face image quality too low for secure authentication',
+                            'confidence': best_confidence,
+                            'quality_score': feature_quality_score,
+                            'security_level': 'enhanced'
+                        }
                     # Update last used timestamp for all samples of this user
                     cursor.execute("""
                         UPDATE face_recognition_data 
@@ -387,6 +433,68 @@ class DatabaseAssistant:
         except Exception as e:
             logger.error(f"Error calculating face similarity: {e}")
             return 0.0
+
+    def _assess_feature_quality(self, features: Dict) -> float:
+        """Assess the quality of face features for security validation"""
+        try:
+            quality_score = 0.8  # Base score
+            quality_factors = []
+
+            # Check if key features are present and valid
+            required_features = ['bounding_box', 'landmarks', 'head_euler_angle_x', 'left_eye_open_probability', 'right_eye_open_probability']
+            present_features = sum(1 for feature in required_features if feature in features and features[feature] is not None)
+            feature_completeness = present_features / len(required_features)
+            quality_factors.append(('completeness', feature_completeness, 0.3))
+
+            # Check head pose quality (frontal faces are better quality)
+            if 'head_euler_angle_x' in features and 'head_euler_angle_y' in features:
+                try:
+                    x_angle = abs(float(features['head_euler_angle_x']))
+                    y_angle = abs(float(features['head_euler_angle_y']))
+                    # Penalty for extreme angles (looking away)
+                    angle_penalty = min(30, max(x_angle, y_angle)) / 30.0
+                    pose_quality = 1.0 - angle_penalty
+                    quality_factors.append(('pose', pose_quality, 0.3))
+                except (ValueError, TypeError):
+                    quality_factors.append(('pose', 0.5, 0.3))  # Neutral score
+
+            # Check eye openness (both eyes should be reasonably open)
+            if 'left_eye_open_probability' in features and 'right_eye_open_probability' in features:
+                try:
+                    left_eye = float(features['left_eye_open_probability'])
+                    right_eye = float(features['right_eye_open_probability'])
+                    # Both eyes should be at least 30% open for good quality
+                    eye_quality = min(left_eye, right_eye) + (max(left_eye, right_eye) * 0.3)
+                    eye_quality = min(1.0, eye_quality)
+                    quality_factors.append(('eyes', eye_quality, 0.2))
+                except (ValueError, TypeError):
+                    quality_factors.append(('eyes', 0.5, 0.2))
+
+            # Check bounding box size (too small faces are low quality)
+            if 'bounding_box' in features:
+                bbox = features['bounding_box']
+                if 'width' in bbox and 'height' in bbox:
+                    try:
+                        width = float(bbox['width'])
+                        height = float(bbox['height'])
+                        # Minimum decent size is 100x100 pixels
+                        size_score = min(1.0, min(width, height) / 100.0)
+                        quality_factors.append(('size', size_score, 0.2))
+                    except (ValueError, TypeError):
+                        quality_factors.append(('size', 0.5, 0.2))
+
+            # Calculate weighted quality score
+            if quality_factors:
+                weighted_sum = sum(score * weight for _, score, weight in quality_factors)
+                total_weight = sum(weight for _, _, weight in quality_factors)
+                final_quality = weighted_sum / total_weight if total_weight > 0 else 0.7
+                return max(0.0, min(1.0, final_quality))
+
+            return 0.7  # Default moderate quality
+
+        except Exception as e:
+            logger.error(f"Error assessing feature quality: {e}")
+            return 0.5  # Conservative fallback
 
 
     def load_environment(self):

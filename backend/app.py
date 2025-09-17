@@ -1544,10 +1544,13 @@ def update_user(current_user, user_id):
             })
             
     except Exception as e:
+        import traceback
         logger.error(f"Error updating user: {e}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        logger.error(f"Request data: {request.get_json()}")
         return jsonify({
             'success': False,
-            'message': 'Failed to update user'
+            'message': f'Failed to update user: {str(e)}'
         }), 500
     
 
