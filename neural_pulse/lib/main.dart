@@ -734,6 +734,25 @@ class ApiService {
     _cookies.addAll(cookies);
   }
 
+  static Map<String, String> _parseCookies(String? setCookieHeader) {
+    Map<String, String> cookies = {};
+    if (setCookieHeader != null) {
+      List<String> allCookies = setCookieHeader.split(',');
+      for (String cookieString in allCookies) {
+        String cookiePair = cookieString.split(';')[0].trim();
+        if (cookiePair.contains('=')) {
+          List<String> parts = cookiePair.split('=');
+          if (parts.length >= 2) {
+            String name = parts[0].trim();
+            String value = parts.sublist(1).join('=').trim();
+            cookies[name] = value;
+          }
+        }
+      }
+    }
+    return cookies;
+  }
+
   static Future<Map<String, dynamic>> completeFaceEnrollment(String userId) async {
     try {
       final response = await http.post(
@@ -795,7 +814,7 @@ class ApiService {
       if (response.statusCode == 200) {
         String? setCookieHeader = response.headers['set-cookie'];
         if (setCookieHeader != null) {
-          Map<String, String> cookies = AuthService._parseCookies(setCookieHeader);
+          Map<String, String> cookies = _parseCookies(setCookieHeader);
           storeCookies(cookies);
         }
       }
