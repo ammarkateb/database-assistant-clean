@@ -209,7 +209,7 @@ class DatabaseAssistant:
                         }
                 
                 # Enhanced but balanced security checks
-                if best_match and best_confidence >= 0.82:  # Slightly lower main threshold
+                if best_match and best_confidence >= 0.88:  # Higher main threshold for security
                     # SECURITY ENHANCEMENT 1: Smart multi-sample verification (only for users with many samples)
                     user_id = best_match['user_id']
                     cursor.execute("""
@@ -243,8 +243,8 @@ class DatabaseAssistant:
 
                         match_rate = matches_above_threshold / total_samples
 
-                        # More forgiving: require 40% of samples to match (not 60%)
-                        if match_rate < 0.4:
+                        # Require 60% of samples to match (3 out of 5 samples)
+                        if match_rate < 0.6:
                             return {
                                 'success': False,
                                 'message': 'Face verification failed - insufficient sample matches',
@@ -610,8 +610,28 @@ class DatabaseAssistant:
                 except (KeyError, ValueError, TypeError):
                     pass
 
-            # Calculate weighted geometric similarity
+            # ULTRA-STRICT: ALL geometric factors must pass individual thresholds
             if distance_factors:
+                # Check if ALL factors pass minimum thresholds
+                all_factors_pass = True
+                min_thresholds = {
+                    'eye_spacing': 0.85,  # Eye spacing must be 85%+ similar
+                    'face_aspect': 0.90,  # Face shape must be 90%+ similar
+                    'nose_mouth': 0.80,   # Nose-mouth distance 80%+ similar
+                    'constellation': 0.75 # Overall landmarks 75%+ similar
+                }
+
+                for factor_name, score, weight in distance_factors:
+                    min_threshold = min_thresholds.get(factor_name, 0.70)
+                    if score < min_threshold:
+                        all_factors_pass = False
+                        logger.info(f"Geometric factor {factor_name} failed: {score:.3f} < {min_threshold}")
+                        break
+
+                if not all_factors_pass:
+                    return 0.0  # Complete failure if any geometric factor fails
+
+                # If all factors pass, calculate weighted score
                 weighted_sum = sum(score * weight for _, score, weight in distance_factors)
                 total_weight = sum(weight for _, _, weight in distance_factors)
 
@@ -620,7 +640,7 @@ class DatabaseAssistant:
                     return max(0.0, min(1.0, geometric_similarity))
 
             # Fallback to basic similarity if no geometric factors available
-            return 0.7  # Neutral score
+            return 0.5  # Lower fallback for missing geometric data
 
         except Exception as e:
             logger.error(f"Error calculating geometric distance: {e}")
