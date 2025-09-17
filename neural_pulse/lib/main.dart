@@ -5828,21 +5828,15 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                 try {
                   setState(() => _isLoading = true);
 
-                  final response = await http.post(
-                    Uri.parse('${ApiService.baseUrl}/admin/create-user'),
-                    headers: const {'Content-Type': 'application/json'},
-                    body: json.encode({
-                      'username': usernameController.text.trim(),
-                      'full_name': fullNameController.text.trim(),
-                      'email': emailController.text.trim(),
-                      'password': passwordController.text,
-                      'role': selectedRole,
-                    }),
+                  final response = await ApiService.createUser(
+                    username: usernameController.text.trim(),
+                    fullName: fullNameController.text.trim(),
+                    email: emailController.text.trim(),
+                    password: passwordController.text,
+                    role: selectedRole,
                   );
 
-                  final result = json.decode(response.body);
-
-                  if (result['success'] == true) {
+                  if (response['success'] == true) {
                     if (mounted) {
                       ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(
@@ -5856,7 +5850,7 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                     if (mounted) {
                       ScaffoldMessenger.of(context).showSnackBar(
                         SnackBar(
-                          content: Text(result['message'] ?? 'Failed to create user'),
+                          content: Text(response['message'] ?? 'Failed to create user'),
                           backgroundColor: Colors.red,
                         ),
                       );

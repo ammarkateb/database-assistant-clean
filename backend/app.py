@@ -531,7 +531,7 @@ def get_face_auth_status(user):
             'samples_needed': max(0, 5 - samples_count),
             'enrollment_complete': samples_count >= 3,
             'can_re_register': True,
-            'confidence_threshold': 0.75,
+            'confidence_threshold': 0.95,
             'max_samples': 5,
             'min_samples_required': 3
         })
@@ -1811,6 +1811,9 @@ def delete_user(current_user, user_id):
                         'message': 'Cannot delete the last admin user'
                     }), 400
             
+            # Delete face recognition data first (to avoid foreign key constraints)
+            cursor.execute("DELETE FROM face_recognition_data WHERE user_id = %s", (user_id,))
+
             # Delete user
             cursor.execute("DELETE FROM users WHERE user_id = %s", (user_id,))
             

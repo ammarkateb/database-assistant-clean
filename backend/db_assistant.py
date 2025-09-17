@@ -133,7 +133,7 @@ class DatabaseAssistant:
             }
 
     def verify_face_with_samples(self, face_features: str) -> Dict[str, Any]:
-        """Verify face against all stored samples with 0.75 confidence threshold"""
+        """Verify face against all stored samples with 0.95 confidence threshold"""
         try:
             import json
             
@@ -200,8 +200,8 @@ class DatabaseAssistant:
                             'matched_sample': user_data['sample_number']
                         }
                 
-                # Check if best match meets the 0.90 confidence threshold (very strict for security)
-                if best_match and best_confidence >= 0.90:
+                # Check if best match meets the 0.95 confidence threshold (extremely strict for maximum security)
+                if best_match and best_confidence >= 0.95:
                     # Update last used timestamp for all samples of this user
                     cursor.execute("""
                         UPDATE face_recognition_data 
