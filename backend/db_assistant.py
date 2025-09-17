@@ -200,8 +200,8 @@ class DatabaseAssistant:
                             'matched_sample': user_data['sample_number']
                         }
                 
-                # Check if best match meets the 0.75 confidence threshold
-                if best_match and best_confidence >= 0.75:
+                # Check if best match meets the 0.90 confidence threshold (very strict for security)
+                if best_match and best_confidence >= 0.90:
                     # Update last used timestamp for all samples of this user
                     cursor.execute("""
                         UPDATE face_recognition_data 

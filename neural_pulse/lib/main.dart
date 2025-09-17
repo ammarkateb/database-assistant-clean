@@ -226,8 +226,8 @@ class User {
     switch (role) {
       case 'visitor': return const Color(0xFF7B1FA2);
       case 'viewer': return const Color(0xFF64FFDA);
-      case 'manager': return const Color(0xFF1B263B);
-      case 'admin': return const Color(0xFF2E0249);
+      case 'manager': return const Color(0xFFFFB74D);
+      case 'admin': return const Color(0xFFFF6B6B);
       default: return const Color(0xFF808080);
     }
   }
@@ -548,34 +548,53 @@ class FaceAuthService {
   static double _calculateFaceConfidence(Face face) {
     double confidence = 1.0;
 
-    // STRICTER: More restrictive head rotation limits
+    // EXTREMELY STRICT: Very restrictive head rotation limits for security
     if (face.headEulerAngleX != null) {
       double xAngle = face.headEulerAngleX!.abs();
-      if (xAngle > 10) confidence *= 0.6;  // Stricter rotation limit
-      if (xAngle > 20) confidence *= 0.3;  // Very strict for large rotations
+      if (xAngle > 5) confidence *= 0.4;   // Very strict rotation limit
+      if (xAngle > 10) confidence *= 0.1;  // Extremely strict for any rotation
     }
 
     if (face.headEulerAngleY != null) {
       double yAngle = face.headEulerAngleY!.abs();
-      if (yAngle > 10) confidence *= 0.6;  // Stricter rotation limit
-      if (yAngle > 20) confidence *= 0.3;  // Very strict for large rotations
+      if (yAngle > 5) confidence *= 0.4;   // Very strict rotation limit
+      if (yAngle > 10) confidence *= 0.1;  // Extremely strict for any rotation
     }
 
-    // STRICTER: Both eyes must be clearly open
-    if (face.leftEyeOpenProbability != null && face.leftEyeOpenProbability! < 0.8) {
-      confidence *= 0.4;  // Much stricter eye requirement
-    }
-    if (face.rightEyeOpenProbability != null && face.rightEyeOpenProbability! < 0.8) {
-      confidence *= 0.4;  // Much stricter eye requirement
+    if (face.headEulerAngleZ != null) {
+      double zAngle = face.headEulerAngleZ!.abs();
+      if (zAngle > 5) confidence *= 0.5;   // Head tilt penalty
+      if (zAngle > 10) confidence *= 0.2;  // Strong penalty for head tilt
     }
 
-    // STRICTER: Require larger, clearer faces
+    // EXTREMELY STRICT: Both eyes must be clearly open and looking straight
+    if (face.leftEyeOpenProbability != null && face.leftEyeOpenProbability! < 0.9) {
+      confidence *= 0.2;  // Extremely strict eye requirement
+    }
+    if (face.rightEyeOpenProbability != null && face.rightEyeOpenProbability! < 0.9) {
+      confidence *= 0.2;  // Extremely strict eye requirement
+    }
+
+    // STRICTER: Require larger, clearer faces for better security
     double faceArea = face.boundingBox.width * face.boundingBox.height;
-    if (faceArea < 20000) confidence *= 0.2; // Face too small
+    if (faceArea < 30000) confidence *= 0.1; // Much larger minimum face required
+    if (faceArea < 20000) confidence *= 0.05; // Extremely small faces rejected
 
-    // STRICTER: Require minimum face dimensions
-    if (face.boundingBox.width < 200 || face.boundingBox.height < 200) {
-      confidence *= 0.3; // Face too small in frame
+    // STRICTER: Require minimum face dimensions for clarity
+    if (face.boundingBox.width < 250 || face.boundingBox.height < 250) {
+      confidence *= 0.1; // Much larger minimum face size required
+    }
+
+    // ADDITIONAL SECURITY: Check for smile (prevent photos/spoofing)
+    if (face.smilingProbability != null) {
+      // Neutral expression preferred for security
+      if (face.smilingProbability! > 0.7) confidence *= 0.7; // Slight penalty for big smiles
+      if (face.smilingProbability! < 0.2) confidence *= 0.8; // Slight penalty for frowning
+    }
+
+    // SECURITY CHECK: Reject artificially perfect detection (possible spoofing)
+    if (confidence > 0.98) {
+      confidence *= 0.9; // Perfect scores are suspicious
     }
 
     return confidence.clamp(0.0, 1.0);
@@ -3034,7 +3053,8 @@ class _FaceAuthSetupScreenState extends State<FaceAuthSetupScreen> {
         child: SafeArea(
           child: Padding(
             padding: const EdgeInsets.all(24),
-            child: Column(
+            child: SingleChildScrollView(
+              child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 const Text(
@@ -3256,6 +3276,7 @@ class _FaceAuthSetupScreenState extends State<FaceAuthSetupScreen> {
                 
                 const SizedBox(height: 20),
               ],
+            ),
             ),
           ),
         ),
@@ -5620,10 +5641,10 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
       _isLoading = true;
       _errorMessage = null;
     });
-    
+
     try {
       final response = await ApiService.getAllUsers();
-      
+
       if (mounted) {
         if (response['success'] == true) {
           setState(() {
@@ -5645,6 +5666,299 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
           _errorMessage = 'Error loading users: $e';
           _isLoading = false;
         });
+      }
+    }
+  }
+
+  Future<void> _createUser() async {
+    final GlobalKey<FormState> formKey = GlobalKey<FormState>();
+    final TextEditingController usernameController = TextEditingController();
+    final TextEditingController fullNameController = TextEditingController();
+    final TextEditingController emailController = TextEditingController();
+    final TextEditingController passwordController = TextEditingController();
+    String selectedRole = 'user';
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1A1A1A),
+        title: const Text('Create New User', style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold)),
+        content: Container(
+          width: 400,
+          child: Form(
+            key: formKey,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextFormField(
+                    controller: usernameController,
+                    style: const TextStyle(color: Colors.white),
+                    decoration: InputDecoration(
+                      labelText: 'Username',
+                      labelStyle: const TextStyle(color: Colors.white70),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
+                        borderSide: const BorderSide(color: Colors.white30),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
+                        borderSide: const BorderSide(color: Color(0xFF64FFDA)),
+                      ),
+                    ),
+                    validator: (value) {
+                      if (value == null || value.trim().isEmpty) return 'Username is required';
+                      if (value.trim().length < 3) return 'Username must be at least 3 characters';
+                      return null;
+                    },
+                  ),
+                  const SizedBox(height: 16),
+                  TextFormField(
+                    controller: fullNameController,
+                    style: const TextStyle(color: Colors.white),
+                    decoration: InputDecoration(
+                      labelText: 'Full Name',
+                      labelStyle: const TextStyle(color: Colors.white70),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
+                        borderSide: const BorderSide(color: Colors.white30),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
+                        borderSide: const BorderSide(color: Color(0xFF64FFDA)),
+                      ),
+                    ),
+                    validator: (value) {
+                      if (value == null || value.trim().isEmpty) return 'Full name is required';
+                      return null;
+                    },
+                  ),
+                  const SizedBox(height: 16),
+                  TextFormField(
+                    controller: emailController,
+                    style: const TextStyle(color: Colors.white),
+                    decoration: InputDecoration(
+                      labelText: 'Email',
+                      labelStyle: const TextStyle(color: Colors.white70),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
+                        borderSide: const BorderSide(color: Colors.white30),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
+                        borderSide: const BorderSide(color: Color(0xFF64FFDA)),
+                      ),
+                    ),
+                    validator: (value) {
+                      if (value == null || value.trim().isEmpty) return 'Email is required';
+                      if (!RegExp(r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$').hasMatch(value.trim())) {
+                        return 'Please enter a valid email';
+                      }
+                      return null;
+                    },
+                  ),
+                  const SizedBox(height: 16),
+                  TextFormField(
+                    controller: passwordController,
+                    obscureText: true,
+                    style: const TextStyle(color: Colors.white),
+                    decoration: InputDecoration(
+                      labelText: 'Password',
+                      labelStyle: const TextStyle(color: Colors.white70),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
+                        borderSide: const BorderSide(color: Colors.white30),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
+                        borderSide: const BorderSide(color: Color(0xFF64FFDA)),
+                      ),
+                    ),
+                    validator: (value) {
+                      if (value == null || value.isEmpty) return 'Password is required';
+                      if (value.length < 6) return 'Password must be at least 6 characters';
+                      return null;
+                    },
+                  ),
+                  const SizedBox(height: 16),
+                  DropdownButtonFormField<String>(
+                    value: selectedRole,
+                    style: const TextStyle(color: Colors.white),
+                    dropdownColor: const Color(0xFF2A2A2A),
+                    decoration: InputDecoration(
+                      labelText: 'Role',
+                      labelStyle: const TextStyle(color: Colors.white70),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
+                        borderSide: const BorderSide(color: Colors.white30),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
+                        borderSide: const BorderSide(color: Color(0xFF64FFDA)),
+                      ),
+                    ),
+                    items: const [
+                      DropdownMenuItem(value: 'user', child: Text('User')),
+                      DropdownMenuItem(value: 'manager', child: Text('Manager')),
+                      DropdownMenuItem(value: 'admin', child: Text('Admin')),
+                    ],
+                    onChanged: (value) => selectedRole = value!,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel', style: TextStyle(color: Colors.white70)),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              if (formKey.currentState!.validate()) {
+                Navigator.pop(context);
+
+                try {
+                  setState(() => _isLoading = true);
+
+                  final response = await http.post(
+                    Uri.parse('${ApiService.baseUrl}/admin/create-user'),
+                    headers: const {'Content-Type': 'application/json'},
+                    body: json.encode({
+                      'username': usernameController.text.trim(),
+                      'full_name': fullNameController.text.trim(),
+                      'email': emailController.text.trim(),
+                      'password': passwordController.text,
+                      'role': selectedRole,
+                    }),
+                  );
+
+                  final result = json.decode(response.body);
+
+                  if (result['success'] == true) {
+                    if (mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('User created successfully!'),
+                          backgroundColor: Colors.green,
+                        ),
+                      );
+                      _loadUsers(); // Refresh user list
+                    }
+                  } else {
+                    if (mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(result['message'] ?? 'Failed to create user'),
+                          backgroundColor: Colors.red,
+                        ),
+                      );
+                    }
+                  }
+                } catch (e) {
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('Error creating user: $e'),
+                        backgroundColor: Colors.red,
+                      ),
+                    );
+                  }
+                } finally {
+                  if (mounted) setState(() => _isLoading = false);
+                }
+              }
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF64FFDA),
+              foregroundColor: Colors.black,
+            ),
+            child: const Text('Create User', style: TextStyle(fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _editUser(User user) async {
+    final result = await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => UserEditScreen(user: user),
+      ),
+    );
+    if (result == true) {
+      _loadUsers();
+    }
+  }
+
+  Future<void> _deleteUser(User user) async {
+    if (user.id == widget.user.id) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('You cannot delete your own account'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1A1A1A),
+        title: const Text('Delete User', style: TextStyle(color: Colors.white)),
+        content: Text(
+          'Are you sure you want to delete ${user.username}? This action cannot be undone.',
+          style: const TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel', style: TextStyle(color: Colors.white70)),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            child: const Text('Delete', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true) {
+      try {
+        final response = await ApiService.deleteUser(user.id);
+        if (response['success'] == true) {
+          _loadUsers();
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('User deleted successfully'),
+              backgroundColor: Colors.green,
+            ),
+          );
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(response['message'] ?? 'Failed to delete user'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+      } catch (e) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
       }
     }
   }
@@ -5783,6 +6097,39 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                                         ),
                                       ],
                                     ),
+                                    trailing: PopupMenuButton<String>(
+                                      icon: const Icon(Icons.more_vert, color: Colors.white),
+                                      color: const Color(0xFF1A1A1A),
+                                      onSelected: (value) async {
+                                        if (value == 'edit') {
+                                          _editUser(user);
+                                        } else if (value == 'delete') {
+                                          _deleteUser(user);
+                                        }
+                                      },
+                                      itemBuilder: (context) => [
+                                        const PopupMenuItem(
+                                          value: 'edit',
+                                          child: Row(
+                                            children: [
+                                              Icon(Icons.edit, color: Colors.white, size: 18),
+                                              SizedBox(width: 8),
+                                              Text('Edit', style: TextStyle(color: Colors.white)),
+                                            ],
+                                          ),
+                                        ),
+                                        const PopupMenuItem(
+                                          value: 'delete',
+                                          child: Row(
+                                            children: [
+                                              Icon(Icons.delete, color: Colors.red, size: 18),
+                                              SizedBox(width: 8),
+                                              Text('Delete', style: TextStyle(color: Colors.red)),
+                                            ],
+                                          ),
+                                        ),
+                                      ],
+                                    ),
                                   ),
                                 );
                               },
@@ -5790,6 +6137,12 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                     ),
                   ],
                 ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: _createUser,
+        backgroundColor: const Color(0xFF64FFDA),
+        tooltip: 'Add New User',
+        child: const Icon(Icons.person_add, color: Colors.black),
+      ),
     );
   }
 }
