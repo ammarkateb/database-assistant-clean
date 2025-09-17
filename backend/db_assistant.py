@@ -176,8 +176,8 @@ class DatabaseAssistant:
                         # Calculate geometric distance for enhanced security
                         geometric_similarity = self._calculate_geometric_distance(features_data, stored_features)
 
-                        # Combined score: 70% confidence + 30% geometric similarity
-                        combined_score = (confidence * 0.7) + (geometric_similarity * 0.3)
+                        # Combined score: 50% confidence + 50% geometric similarity (more geometric weight)
+                        combined_score = (confidence * 0.5) + (geometric_similarity * 0.5)
 
                         # Track the best combined score for each user across all their samples
                         if user_id not in user_confidences or combined_score > user_confidences[user_id]['confidence']:
@@ -233,7 +233,7 @@ class DatabaseAssistant:
                                         features_data, stored_features
                                     )
                                     # Combined score for multi-sample check
-                                    sample_combined = (sample_confidence * 0.7) + (sample_geometric * 0.3)
+                                    sample_combined = (sample_confidence * 0.5) + (sample_geometric * 0.5)
 
                                     # More forgiving threshold for individual samples
                                     if sample_combined >= 0.75:
@@ -522,7 +522,11 @@ class DatabaseAssistant:
 
                     if spacing1 > 0 and spacing2 > 0:
                         spacing_ratio = min(spacing1, spacing2) / max(spacing1, spacing2)
-                        distance_factors.append(('eye_spacing', spacing_ratio, 0.3))
+                        # Much stricter eye spacing - must be very similar
+                        if spacing_ratio >= 0.85:  # Only accept very close matches
+                            distance_factors.append(('eye_spacing', spacing_ratio, 0.4))
+                        else:
+                            distance_factors.append(('eye_spacing', 0.0, 0.4))  # Fail if too different
                 except (KeyError, ValueError, TypeError):
                     pass
 
@@ -538,7 +542,11 @@ class DatabaseAssistant:
 
                         if ratio1 > 0 and ratio2 > 0:
                             aspect_similarity = min(ratio1, ratio2) / max(ratio1, ratio2)
-                            distance_factors.append(('face_aspect', aspect_similarity, 0.2))
+                            # Stricter face aspect ratio
+                            if aspect_similarity >= 0.90:  # Face shape must be very similar
+                                distance_factors.append(('face_aspect', aspect_similarity, 0.3))
+                            else:
+                                distance_factors.append(('face_aspect', 0.0, 0.3))
                 except (KeyError, ValueError, TypeError):
                     pass
 
