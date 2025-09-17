@@ -209,7 +209,7 @@ class DatabaseAssistant:
                         }
                 
                 # Enhanced but balanced security checks
-                if best_match and best_confidence >= 0.88:  # Higher main threshold for security
+                if best_match and best_confidence >= 0.92:  # Maximum threshold for security
                     # SECURITY ENHANCEMENT 1: Smart multi-sample verification (only for users with many samples)
                     user_id = best_match['user_id']
                     cursor.execute("""
@@ -243,8 +243,8 @@ class DatabaseAssistant:
 
                         match_rate = matches_above_threshold / total_samples
 
-                        # Require 60% of samples to match (3 out of 5 samples)
-                        if match_rate < 0.6:
+                        # Require 80% of samples to match (4 out of 5 samples)
+                        if match_rate < 0.8:
                             return {
                                 'success': False,
                                 'message': 'Face verification failed - insufficient sample matches',
@@ -615,10 +615,10 @@ class DatabaseAssistant:
                 # Check if ALL factors pass minimum thresholds
                 all_factors_pass = True
                 min_thresholds = {
-                    'eye_spacing': 0.85,  # Eye spacing must be 85%+ similar
-                    'face_aspect': 0.90,  # Face shape must be 90%+ similar
-                    'nose_mouth': 0.80,   # Nose-mouth distance 80%+ similar
-                    'constellation': 0.75 # Overall landmarks 75%+ similar
+                    'eye_spacing': 0.95,  # Eye spacing must be 95%+ similar (near perfect)
+                    'face_aspect': 0.95,  # Face shape must be 95%+ similar (near perfect)
+                    'nose_mouth': 0.90,   # Nose-mouth distance 90%+ similar
+                    'constellation': 0.85 # Overall landmarks 85%+ similar
                 }
 
                 for factor_name, score, weight in distance_factors:
