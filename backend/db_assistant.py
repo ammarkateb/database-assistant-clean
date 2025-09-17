@@ -133,7 +133,7 @@ class DatabaseAssistant:
             }
 
     def verify_face_with_samples(self, face_features: str) -> Dict[str, Any]:
-        """Verify face against all stored samples with 0.95 confidence threshold"""
+        """Verify face against all stored samples with 0.85 confidence threshold"""
         try:
             import json
             
@@ -200,8 +200,8 @@ class DatabaseAssistant:
                             'matched_sample': user_data['sample_number']
                         }
                 
-                # Check if best match meets the 0.95 confidence threshold (extremely strict for maximum security)
-                if best_match and best_confidence >= 0.95:
+                # Check if best match meets the 0.85 confidence threshold (balanced security)
+                if best_match and best_confidence >= 0.85:
                     # Update last used timestamp for all samples of this user
                     cursor.execute("""
                         UPDATE face_recognition_data 
@@ -896,30 +896,52 @@ class DatabaseAssistant:
                     if success and df_result is not None and not df_result.empty:
                         display_data = df_result.head(50).to_dict('records')
                         
-                        # Get the appropriate result value for message formatting
-                        actual_result = None
-                        if len(df_result) > 0:
-                            # For single value results
-                            if len(df_result.columns) == 1 and len(df_result) == 1:
-                                actual_result = df_result.iloc[0, 0]
-                            # For count results
-                            elif 'count' in df_result.columns[0].lower():
-                                actual_result = df_result.iloc[0, 0]
-                            # For year-based results
-                            elif len(df_result.columns) >= 2:
-                                actual_result = len(df_result)
-                        
                         # Process the response message with actual data
                         base_message = gemini_response.get('response_message', 'Query completed successfully.')
-                        
-                        # Replace placeholders with actual values
-                        if actual_result is not None:
-                            processed_message = base_message.replace('[COUNT]', str(actual_result))
-                            processed_message = processed_message.replace('[VALUE]', str(actual_result))
-                            processed_message = processed_message.replace('[SUM(total_amount)]', str(actual_result))
-                            processed_message = processed_message.replace('[SUM]', str(actual_result))
-                        else:
-                            processed_message = base_message
+                        processed_message = base_message
+
+                        # Enhanced placeholder replacement for different query types
+                        if len(df_result) > 0:
+                            # For single value results (like counts, sums, averages)
+                            if len(df_result.columns) == 1 and len(df_result) == 1:
+                                value = df_result.iloc[0, 0]
+                                # Format numbers properly
+                                if isinstance(value, (int, float)):
+                                    if isinstance(value, float) and value > 1000:
+                                        formatted_value = f"${value:,.2f}" if 'sales' in base_message.lower() or 'revenue' in base_message.lower() or '$' in base_message else f"{value:,.2f}"
+                                    else:
+                                        formatted_value = f"${value:,.0f}" if 'sales' in base_message.lower() or 'revenue' in base_message.lower() or '$' in base_message else str(int(value))
+                                else:
+                                    formatted_value = str(value)
+
+                                processed_message = processed_message.replace('[COUNT]', formatted_value)
+                                processed_message = processed_message.replace('[VALUE]', formatted_value)
+                                processed_message = processed_message.replace('[SUM(total_amount)]', formatted_value)
+                                processed_message = processed_message.replace('[SUM]', formatted_value)
+                                processed_message = processed_message.replace('[monthly_average]', formatted_value)
+
+                            # For multi-column results (like top customer queries)
+                            elif len(df_result.columns) >= 2 and len(df_result) > 0:
+                                first_row = df_result.iloc[0]
+                                # Replace column-based placeholders
+                                for col_name in df_result.columns:
+                                    placeholder = f"[{col_name}]"
+                                    value = first_row[col_name]
+
+                                    # Format the value appropriately
+                                    if isinstance(value, (int, float)):
+                                        if 'total' in col_name.lower() or 'sales' in col_name.lower() or 'revenue' in col_name.lower():
+                                            formatted_value = f"${value:,.2f}"
+                                        else:
+                                            formatted_value = f"{value:,.0f}"
+                                    else:
+                                        formatted_value = str(value)
+
+                                    processed_message = processed_message.replace(placeholder, formatted_value)
+
+                                # Handle common naming patterns
+                                processed_message = processed_message.replace('[customer_name]', str(first_row.iloc[0]))
+                                processed_message = processed_message.replace('[monthly_total]', f"${first_row.iloc[-1]:,.2f}" if isinstance(first_row.iloc[-1], (int, float)) else str(first_row.iloc[-1]))
                         
                         response_data.update({
                             'success': True,
