@@ -790,7 +790,16 @@ class ApiService {
           'face_features': faceFeatures,
         }),
       ).timeout(const Duration(seconds: 30));
-      
+
+      // Extract and store cookies from successful face authentication
+      if (response.statusCode == 200) {
+        String? setCookieHeader = response.headers['set-cookie'];
+        if (setCookieHeader != null) {
+          Map<String, String> cookies = AuthService._parseCookies(setCookieHeader);
+          storeCookies(cookies);
+        }
+      }
+
       return json.decode(response.body);
     } catch (e) {
       return {'success': false, 'message': 'Network error: $e'};
