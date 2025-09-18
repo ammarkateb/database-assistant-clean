@@ -209,7 +209,7 @@ class DatabaseAssistant:
                         }
                 
                 # Enhanced but balanced security checks
-                if best_match and best_confidence >= 0.92:  # Maximum threshold for security
+                if best_match and best_confidence >= 0.85:  # Geometric recognition threshold
                     # SECURITY ENHANCEMENT 1: Smart multi-sample verification (only for users with many samples)
                     user_id = best_match['user_id']
                     cursor.execute("""

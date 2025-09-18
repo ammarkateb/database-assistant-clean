@@ -563,107 +563,56 @@ def clear_face_auth_attempts():
 # LEGACY FACIAL AUTHENTICATION ENDPOINTS
 @app.route('/facial-auth/authenticate', methods=['POST'])
 def facial_authenticate():
-    """Authenticate user using face recognition with improved tolerance"""
+    """Authenticate user using geometric face recognition"""
     if not DB_AVAILABLE:
         return jsonify({
             'success': False,
             'message': 'Facial authentication not available'
         }), 500
-    
+
     try:
         data = request.get_json()
-        
-        if not data or 'image' not in data:
+
+        if not data or 'face_features' not in data:
             return jsonify({
                 'success': False,
-                'message': 'Image data required'
+                'message': 'Face features data required'
             }), 400
-        
-        image_base64 = data['image']
-        
-        # Clean base64 string if it has data URL prefix
-        if image_base64.startswith('data:'):
-            image_base64 = image_base64.split(',')[1]
-        
-        # Create hash from input image
-        import hashlib
-        input_encoding = hashlib.sha256(image_base64.encode()).hexdigest()
-        
-        with db_assistant.get_db_connection() as conn:
-            cursor = conn.cursor()
-            
-            # First try exact match
-            cursor.execute("""
-                SELECT u.user_id, u.username, u.full_name, u.role, frd.face_encoding
-                FROM face_recognition_data frd
-                JOIN users u ON frd.user_id = u.user_id
-                WHERE frd.is_active = true AND u.is_active = true
-                AND frd.face_encoding = %s
-            """, (input_encoding,))
-            
-            result = cursor.fetchone()
-            
-            if not result:
-                # Try similarity matching using image size comparison
+
+        face_features = data['face_features']
+
+        # Use geometric face verification from db_assistant
+        result = db_assistant.verify_face_with_samples(face_features)
+
+        if result['success']:
+            user_data = result['user']
+
+            # Update last used timestamp
+            with db_assistant.get_db_connection() as conn:
+                cursor = conn.cursor()
                 cursor.execute("""
-                    SELECT u.user_id, u.username, u.full_name, u.role, 
-                           frd.face_encoding, frd.face_image_original
-                    FROM face_recognition_data frd
-                    JOIN users u ON frd.user_id = u.user_id
-                    WHERE frd.is_active = true AND u.is_active = true
-                """)
-                
-                all_users = cursor.fetchall()
-                
-                # Simple similarity check based on image size
-                input_size = len(image_base64)
-                best_match = None
-                best_similarity = 0
-                
-                for user_data in all_users:
-                    stored_image = user_data[5]  # face_image_original
-                    if stored_image:
-                        stored_size = len(stored_image)
-                        # Calculate size similarity (simple approach)
-                        size_diff = abs(input_size - stored_size)
-                        max_size = max(input_size, stored_size)
-                        similarity = 1 - (size_diff / max_size)
-                        
-                        # If similarity is above 85%, consider it a match
-                        if similarity > 0.85 and similarity > best_similarity:
-                            best_similarity = similarity
-                            best_match = user_data
-                
-                if best_match:
-                    result = best_match[:5]  # Take first 5 elements (exclude image)
-            
-            if result:
-                user_id, username, full_name, role, _ = result
-                
-                # Update last used timestamp
-                cursor.execute("""
-                    UPDATE face_recognition_data 
-                    SET last_used = NOW() 
+                    UPDATE face_recognition_data
+                    SET last_used = NOW()
                     WHERE user_id = %s
-                """, (user_id,))
+                """, (user_data['id'],))
                 conn.commit()
-                
-                logger.info(f"Face authentication successful for user: {username}")
-                
-                return jsonify({
-                    'success': True,
-                    'user': {'id': user_id, 'name': full_name or username},
-                    'permission_level': role,
-                    'message': f'Welcome back, {full_name or username}!',
-                    'confidence': 1.0
-                })
-            else:
-                logger.warning("Face authentication failed - no matching face found")
-                return jsonify({
-                    'success': False,
-                    'message': 'Face not recognized. Please try again with better lighting or register your face again.'
-                })
-                
+
+            logger.info(f"Geometric face authentication successful for user: {user_data['username']}")
+
+            return jsonify({
+                'success': True,
+                'user': {'id': user_data['id'], 'name': user_data['full_name'] or user_data['username']},
+                'permission_level': user_data['role'],
+                'message': f'Welcome back, {user_data["full_name"] or user_data["username"]}!',
+                'confidence': result['confidence']
+            })
+        else:
+            logger.warning("Geometric face authentication failed - no matching face found")
+            return jsonify({
+                'success': False,
+                'message': result['message']
+            })
+
     except Exception as e:
         logger.error(f"Facial authentication error: {e}")
         return jsonify({

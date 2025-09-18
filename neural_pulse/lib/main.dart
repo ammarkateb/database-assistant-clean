@@ -713,7 +713,7 @@ class FaceAuthService {
 
 
 class ApiService {
-  static const String baseUrl = 'http://192.168.8.155:5000';
+  static const String baseUrl = 'https://database-assistant-clean-production.up.railway.app';
   static Map<String, String> _cookies = {};
   
   static Map<String, String> _getHeaders() {
@@ -1108,7 +1108,7 @@ class ApiService {
 }
 
 class AuthService {
-  static const String baseUrl = 'http://192.168.8.155:5000';
+  static const String baseUrl = 'https://database-assistant-clean-production.up.railway.app';
   static User? _currentUser;
 
   static User? get currentUser => _currentUser;

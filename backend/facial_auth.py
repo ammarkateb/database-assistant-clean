@@ -97,7 +97,7 @@ class FacialAuthSystem:
             logger.error(f"Failed to calculate hash similarity: {e}")
             return 0.0
     
-    def _find_similar_faces(self, input_hash: str, tolerance: float = 0.85) -> List[Dict]:
+    def _find_similar_faces(self, input_hash: str, tolerance: float = 0.92) -> List[Dict]:
         """Find faces similar to input hash within tolerance"""
         try:
             with sqlite3.connect(self.db_path) as conn:
@@ -307,7 +307,7 @@ class FacialAuthSystem:
             logger.error(f"Authentication failed: {e}")
             return {"success": False, "message": f"Authentication error: {str(e)}"}
     
-    def authenticate_user_with_tolerance(self, image_base64: str, tolerance: float = 0.75) -> Dict:
+    def authenticate_user_with_tolerance(self, image_base64: str, tolerance: float = 0.90) -> Dict:
         """Authenticate user with improved tolerance for face variations"""
         try:
             input_hash = self._create_image_hash(image_base64)
