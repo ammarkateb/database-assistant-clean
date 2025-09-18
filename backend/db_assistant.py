@@ -176,8 +176,8 @@ class DatabaseAssistant:
                         # Calculate geometric distance for enhanced security
                         geometric_similarity = self._calculate_geometric_distance(features_data, stored_features)
 
-                        # Combined score: 50% confidence + 50% geometric similarity (more geometric weight)
-                        combined_score = (confidence * 0.5) + (geometric_similarity * 0.5)
+                        # Require BOTH high confidence AND high geometric similarity (multiplicative approach)
+                        combined_score = confidence * geometric_similarity
 
                         # Track the best combined score for each user across all their samples
                         if user_id not in user_confidences or combined_score > user_confidences[user_id]['confidence']:
@@ -209,7 +209,7 @@ class DatabaseAssistant:
                         }
                 
                 # Enhanced but balanced security checks
-                if best_match and best_confidence >= 0.90:  # Strict geometric recognition threshold
+                if best_match and best_confidence >= 0.75:  # Multiplicative threshold (confidence * geometric)
                     # SECURITY ENHANCEMENT 1: Smart multi-sample verification (only for users with many samples)
                     user_id = best_match['user_id']
                     cursor.execute("""
