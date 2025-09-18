@@ -640,11 +640,11 @@ class DatabaseAssistant:
                     return max(0.0, min(1.0, geometric_similarity))
 
             # Fallback to basic similarity if no geometric factors available
-            return 0.5  # Lower fallback for missing geometric data
+            return 0.1  # Very low fallback for missing geometric data
 
         except Exception as e:
             logger.error(f"Error calculating geometric distance: {e}")
-            return 0.5  # Conservative fallback
+            return 0.1  # Very low fallback for errors
 
 
     def load_environment(self):
