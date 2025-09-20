@@ -1,29 +1,14 @@
-# Multi-stage build for Ollama + Phi-3 Mini
-FROM ollama/ollama:latest as ollama-base
-
-# Install curl for health checks
-RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
-
-# Create ollama user and directories
-RUN useradd -r -s /bin/false -m -d /usr/share/ollama ollama
-RUN mkdir -p /usr/share/ollama/.ollama && chown ollama:ollama /usr/share/ollama/.ollama
-
-# Start ollama service and pull phi3:mini
-RUN ollama serve & sleep 10 && ollama pull phi3:mini
-
-# Production stage
+# Use Python base image and install Ollama
 FROM python:3.11-slim
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
     curl \
+    bash \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Ollama
 RUN curl -fsSL https://ollama.ai/install.sh | sh
-
-# Copy pre-downloaded model from ollama-base stage
-COPY --from=ollama-base /usr/share/ollama/.ollama /root/.ollama
 
 # Set working directory
 WORKDIR /app
