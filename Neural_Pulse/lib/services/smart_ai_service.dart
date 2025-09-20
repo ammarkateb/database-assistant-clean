@@ -4,7 +4,7 @@ import 'package:http/http.dart' as http;
 import 'local_database.dart';
 
 class SmartAIService {
-  static const String ollamaBaseUrl = 'http://localhost:11434';
+  static const String ollamaBaseUrl = 'http://192.168.8.155:11434';
   static const String modelName = 'phi3:mini';
 
   // Main AI response processor - uses local Phi-3 Mini LLM
