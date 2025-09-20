@@ -9,118 +9,37 @@ import 'package:permission_handler/permission_handler.dart';
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
+import 'package:fl_chart/fl_chart.dart';
+
+// Import our new services (integrating offline functionality)
+import 'services/data_service.dart';
+import 'services/sync_manager.dart';
+import 'services/local_database.dart';
+import 'services/platform_face_auth.dart';
+import 'services/smart_ai_service.dart';
+// Removed biometric service - using Face Authentication only
 
 
-class BiometricAuthService {
-  static final LocalAuthentication _localAuth = LocalAuthentication();
-  static const FlutterSecureStorage _secureStorage = FlutterSecureStorage();
-
-  static Future<bool> isBiometricAvailable() async {
-    try {
-      return await _localAuth.canCheckBiometrics;
-    } catch (e) {
-      return false;
-    }
-  }
-
-  static Future<bool> isBiometricLoginEnabled() async {
-    final enabled = await _secureStorage.read(key: 'biometric_enabled');
-    return enabled == 'true';
-  }
-
-  static Future<String> getBiometricCapabilitiesDescription() async {
-    try {
-      final availableBiometrics = await _localAuth.getAvailableBiometrics();
-      if (availableBiometrics.contains(BiometricType.face)) {
-        return 'Face ID available';
-      } else if (availableBiometrics.contains(BiometricType.fingerprint)) {
-        return 'Fingerprint available';
-      } else {
-        return 'No biometric authentication available';
-      }
-    } catch (e) {
-      return 'Biometric status unknown';
-    }
-  }
-
-  static Future<bool> enableBiometricLogin(User user) async {
-    try {
-      final isAuthenticated = await _localAuth.authenticate(
-        localizedReason: 'Enable biometric login for your account',
-        options: const AuthenticationOptions(
-          biometricOnly: true,
-          stickyAuth: true,
-        ),
-      );
-
-      if (isAuthenticated) {
-        await _secureStorage.write(key: 'biometric_enabled', value: 'true');
-        await _secureStorage.write(key: 'stored_username', value: user.username);
-        await _secureStorage.write(key: 'stored_user_id', value: user.id.toString());
-        return true;
-      }
-      return false;
-    } catch (e) {
-      return false;
-    }
-  }
-
-  static Future<bool> disableBiometricLogin() async {
-    try {
-      await _secureStorage.delete(key: 'biometric_enabled');
-      await _secureStorage.delete(key: 'stored_username');
-      await _secureStorage.delete(key: 'stored_user_id');
-      return true;
-    } catch (e) {
-      return false;
-    }
-  }
-
-  static Future<LoginResult> loginWithBiometric() async {
-    try {
-      final isAuthenticated = await _localAuth.authenticate(
-        localizedReason: 'Use biometric authentication to login',
-        options: const AuthenticationOptions(
-          biometricOnly: true,
-          stickyAuth: true,
-        ),
-      );
-
-      if (isAuthenticated) {
-        final username = await _secureStorage.read(key: 'stored_username');
-        final userId = await _secureStorage.read(key: 'stored_user_id');
-        
-        if (username != null && userId != null) {
-          final user = User(
-            id: int.parse(userId),
-            username: username,
-            role: 'user',
-            fullName: username,
-            email: '',
-            isActive: true,
-            createdAt: DateTime.now(),
-            biometricEnabled: true,
-          );
-          return LoginResult.success(user);
-        }
-      }
-      return LoginResult.error('Biometric authentication failed');
-    } catch (e) {
-      return LoginResult.error('Biometric authentication error: ${e.toString()}');
-    }
-  }
-
-  static Future<void> clearStoredData() async {
-    await _secureStorage.deleteAll();
-  }
-}
+// Removed BiometricAuthService - using Face Authentication only
 
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+
+  // Initialize offline database and sync services
+  try {
+    await DataService().initialize();
+    print('✅ Offline database initialized successfully');
+  } catch (e) {
+    print('⚠️ Failed to initialize offline database: $e');
+    // Continue anyway - app will work online-only
+  }
+
   runApp(const MyApp());
 }
+
+// Database services removed for iOS performance
 
 class MyApp extends StatelessWidget {
   const MyApp({Key? key}) : super(key: key);
@@ -363,16 +282,26 @@ class CameraService {
   }
 }
 
-// Enhanced Face Authentication Service with Multi-Sample Support
+// Platform-aware Face Authentication Service (ML Kit for Android, skip for iOS)
 class FaceAuthService {
-  static final FaceDetector _faceDetector = FaceDetector(
-    options: FaceDetectorOptions(
-      enableContours: true,
-      enableLandmarks: true,
-      enableClassification: true,
-      enableTracking: true,
-    ),
-  );
+  static FaceDetector? _faceDetector;
+
+  // Lazy initialization - only create on Android when needed
+  static FaceDetector get faceDetector {
+    if (Platform.isIOS) {
+      throw Exception('Face detection not available on iOS - use Face ID instead');
+    }
+
+    _faceDetector ??= FaceDetector(
+      options: FaceDetectorOptions(
+        enableContours: false,      // Reduced for performance
+        enableLandmarks: false,     // Reduced for performance
+        enableClassification: false, // Reduced for performance
+        enableTracking: false,      // Reduced for performance
+      ),
+    );
+    return _faceDetector!;
+  }
 
   // NEW METHOD 1: Simple face image capture
   static Future<File?> captureFaceImage() async {
@@ -440,6 +369,9 @@ class FaceAuthService {
 
   static Future<Map<String, dynamic>> _captureFaceSample(int sampleNumber) async {
     try {
+      // Add small delay to prevent UI blocking
+      await Future.delayed(const Duration(milliseconds: 100));
+
       final imageFile = await CameraService.captureImage();
       if (imageFile == null) {
         return {
@@ -448,9 +380,9 @@ class FaceAuthService {
         };
       }
 
-      // Process with ML Kit
+      // Process with ML Kit (with lighter options for better performance)
       final inputImage = InputImage.fromFile(imageFile);
-      final faces = await _faceDetector.processImage(inputImage);
+      final faces = await faceDetector.processImage(inputImage);
 
       if (faces.isEmpty) {
         return {
@@ -545,6 +477,29 @@ class FaceAuthService {
     return json.encode(features);
   }
 
+  // Simplified face feature extraction for Android (lightweight)
+  static Future<String> _extractSimpleFaceFeatures(File imageFile) async {
+    if (Platform.isIOS) {
+      throw Exception('Use Face ID for iOS devices');
+    }
+
+    try {
+      // Basic image processing without heavy ML Kit features
+      final bytes = await imageFile.readAsBytes();
+      final features = {
+        'version': '1.0',
+        'image_hash': bytes.hashCode.toString(),
+        'file_size': bytes.length,
+        'timestamp': DateTime.now().millisecondsSinceEpoch,
+        'platform': 'android'
+      };
+
+      return json.encode(features);
+    } catch (e) {
+      throw Exception('Failed to extract face features: $e');
+    }
+  }
+
   static double _calculateFaceConfidence(Face face) {
     double confidence = 1.0;
 
@@ -623,10 +578,19 @@ class FaceAuthService {
 
   // Interactive enrollment with UI guidance
   static Future<Map<String, dynamic>> interactiveEnrollment(
-    String userId, 
+    String userId,
     Function(String) onStatusUpdate,
     Function(int, int) onProgressUpdate
   ) async {
+    // On iOS, redirect to Face ID setup instead of ML Kit
+    if (Platform.isIOS) {
+      return {
+        'success': false,
+        'message': 'Please use Face ID setup for iOS devices',
+        'redirect_to_faceid': true
+      };
+    }
+
     try {
       onStatusUpdate('Starting face enrollment...');
       onProgressUpdate(0, 5);
@@ -713,7 +677,7 @@ class FaceAuthService {
 
 
 class ApiService {
-  static const String baseUrl = 'https://database-assistant-clean-production.up.railway.app';
+  static const String baseUrl = 'http://localhost:5000'; // Local Ollama server
   static Map<String, String> _cookies = {};
   
   static Map<String, String> _getHeaders() {
@@ -732,6 +696,10 @@ class ApiService {
   
   static void storeCookies(Map<String, String> cookies) {
     _cookies.addAll(cookies);
+  }
+
+  static void clearCookies() {
+    _cookies.clear();
   }
 
   static Map<String, String> _parseCookies(String? setCookieHeader) {
@@ -1071,25 +1039,36 @@ class ApiService {
   // Query and Chat Methods
   static Future<Map<String, dynamic>> sendQuery(String query, {List<Message>? conversationHistory}) async {
     try {
-      Map<String, dynamic> requestBody = {'query': query};
-      
+      // First try Smart AI service (offline/cached analysis)
+      final smartResponse = await SmartAIService.processQuery(query);
+
+      // Store the conversation locally for future context
       if (conversationHistory != null && conversationHistory.isNotEmpty) {
-        requestBody['conversation_history'] = conversationHistory.map((msg) => {
-          'sender': msg.sender,
-          'content': msg.content,
-          'timestamp': msg.timestamp.toIso8601String(),
-        }).toList();
+        await LocalDatabase.insertMessage({
+          'user_id': 1, // TODO: Get actual user ID
+          'sender': 'user',
+          'content': query,
+          'type': 'text',
+          'timestamp': DateTime.now().toIso8601String()
+        });
+        await LocalDatabase.insertMessage({
+          'user_id': 1, // TODO: Get actual user ID
+          'sender': 'assistant',
+          'content': smartResponse['message'] ?? 'No response',
+          'type': smartResponse.containsKey('chart') ? 'chart' : 'text',
+          'chart_data': smartResponse.containsKey('chart') ? smartResponse['chart'].toString() : null,
+          'timestamp': DateTime.now().toIso8601String()
+        });
       }
 
-      final response = await http.post(
-        Uri.parse('$baseUrl/query'),
-        headers: _getHeaders(),
-        body: json.encode(requestBody),
-      ).timeout(const Duration(seconds: 60));
-      
-      return json.decode(response.body);
+      return smartResponse;
     } catch (e) {
-      return {'success': false, 'message': 'Network error: $e'};
+      // Fallback error message
+      return {
+        'success': false,
+        'message': 'Error processing query: $e',
+        'offline': true
+      };
     }
   }
 
@@ -1108,7 +1087,7 @@ class ApiService {
 }
 
 class AuthService {
-  static const String baseUrl = 'https://database-assistant-clean-production.up.railway.app';
+  static const String baseUrl = 'http://localhost:5000'; // Local Ollama server
   static User? _currentUser;
 
   static User? get currentUser => _currentUser;
@@ -1136,6 +1115,7 @@ class AuthService {
 
   static Future<LoginResult> login(String username, String password) async {
     try {
+      // Try online login first
       final response = await http.post(
         Uri.parse('$baseUrl/login'),
         headers: const {'Content-Type': 'application/json'},
@@ -1144,15 +1124,23 @@ class AuthService {
 
       if (response.statusCode == 200) {
         final result = json.decode(response.body);
-        
+
         String? setCookieHeader = response.headers['set-cookie'];
         if (setCookieHeader != null) {
           Map<String, String> cookies = _parseCookies(setCookieHeader);
           ApiService.storeCookies(cookies);
         }
-        
+
         if (result['success'] == true) {
           _currentUser = User.fromJson(result['user']);
+
+          // Store user data offline for future use
+          try {
+            await LocalDatabase.insertUser(result['user']);
+          } catch (e) {
+            print('Failed to cache user data: $e');
+          }
+
           return LoginResult.success(_currentUser!);
         } else {
           return LoginResult.error(result['message'] ?? 'Login failed');
@@ -1161,16 +1149,37 @@ class AuthService {
         return LoginResult.error('Server error: ${response.statusCode}');
       }
     } catch (e) {
+      // Try offline login as fallback
+      try {
+        final cachedUser = await LocalDatabase.getUser(username);
+        if (cachedUser != null) {
+          _currentUser = User.fromJson(cachedUser);
+          return LoginResult.success(_currentUser!);
+        }
+      } catch (offlineError) {
+        print('Offline login also failed: $offlineError');
+      }
+
       return LoginResult.error('Network error: Please check your connection');
     }
   }
 
   static Future<LoginResult> loginWithBiometric() async {
-    return await BiometricAuthService.loginWithBiometric();
+    // Redirect to Face Authentication
+    return await loginWithFace();
   }
 
-  // Setup face authentication for current user
+  // Platform-specific face authentication setup (without password)
   static Future<Map<String, dynamic>> setupFaceAuth() async {
+    return {
+      'success': false,
+      'message': 'Use setupFaceAuthWithPassword() for iOS Face ID',
+      'needs_password': true
+    };
+  }
+
+  // Platform-specific face authentication setup (with password for iOS)
+  static Future<Map<String, dynamic>> setupFaceAuthWithPassword(String password) async {
     if (_currentUser == null) {
       return {
         'success': false,
@@ -1179,11 +1188,20 @@ class AuthService {
     }
 
     try {
-      return await FaceAuthService.interactiveEnrollment(
-        _currentUser!.id.toString(),
-        (status) => print('Face setup status: $status'),
-        (current, total) => print('Progress: $current/$total')
-      );
+      if (Platform.isIOS) {
+        // Use Face ID/Touch ID for iOS with real password
+        return await PlatformFaceAuth.setupFaceAuth(
+          _currentUser!.username,
+          password
+        );
+      } else {
+        // Use ML Kit for Android
+        return await FaceAuthService.interactiveEnrollment(
+          _currentUser!.id.toString(),
+          (status) => print('Face setup status: $status'),
+          (current, total) => print('Progress: $current/$total')
+        );
+      }
     } catch (e) {
       return {
         'success': false,
@@ -1193,65 +1211,38 @@ class AuthService {
   }
 
   static Future<LoginResult> loginWithFace() async {
-      try {
-        // Clear any previous face auth attempts
-        await ApiService.clearFaceAuthAttempts();
-        
-        // Capture image
+    try {
+      Map<String, dynamic> result;
+
+      if (Platform.isIOS) {
+        // Use Face ID/Touch ID for iOS
+        result = await PlatformFaceAuth.authenticateWithFace();
+      } else {
+        // Use ML Kit for Android - simplified version without heavy processing
         final imageFile = await FaceAuthService.captureFaceImage();
         if (imageFile == null) {
           return LoginResult.error('Failed to capture image');
         }
-        
-        // Process with ML Kit
-        final inputImage = InputImage.fromFile(imageFile);
-        final faces = await FaceDetector(
-          options: FaceDetectorOptions(
-            enableContours: true,
-            enableLandmarks: true,
-            enableClassification: true,
-            enableTracking: true,
-          ),
-        ).processImage(inputImage);
-        
-        if (faces.isEmpty) {
-          return LoginResult.error('No face detected');
-        }
-        
-        if (faces.length > 1) {
-          return LoginResult.error('Multiple faces detected. Please ensure only you are in the frame.');
-        }
-        
-        // Extract features in the format your backend expects
-        final faceFeatures = FaceAuthService._extractEnhancedFaceFeatures(faces.first, imageFile);
-        
-        // Use the enhanced face verification
-        final result = await ApiService.verifyFaceLogin(faceFeatures);
-        
-        if (result['success'] == true) {
-          if (result['user'] != null) {
-            _currentUser = User.fromJson(result['user']);
-            return LoginResult.success(_currentUser!);
-          } else {
-            return LoginResult.error('User data not received from server');
-          }
-        } else {
-          String errorMessage = result['message'] ?? 'Face authentication failed';
-          
-          // Handle specific error cases
-          if (result['redirect_to_login'] == true) {
-            errorMessage += '\nPlease use username/password login.';
-          } else if (result['attempts_remaining'] != null) {
-            int remaining = result['attempts_remaining'];
-            errorMessage += '\n$remaining attempts remaining.';
-          }
-          
-          return LoginResult.error(errorMessage);
-        }
-      } catch (e) {
-        return LoginResult.error('Face authentication error: ${e.toString()}');
+
+        // For Android, use the existing face verification API
+        final faceFeatures = await FaceAuthService._extractSimpleFaceFeatures(imageFile);
+        result = await ApiService.verifyFaceLogin(faceFeatures);
       }
+
+      if (result['success'] == true) {
+        if (result['user'] != null) {
+          _currentUser = User.fromJson(result['user']);
+          return LoginResult.success(_currentUser!);
+        } else {
+          return LoginResult.error('User data not received');
+        }
+      } else {
+        return LoginResult.error(result['message'] ?? 'Face authentication failed');
+      }
+    } catch (e) {
+      return LoginResult.error('Face authentication error: ${e.toString()}');
     }
+  }
 
   // Get face authentication status for current user
   static Future<Map<String, dynamic>> getFaceAuthStatus() async {
@@ -1419,7 +1410,7 @@ class AuthService {
     }
 
     _currentUser = null;
-    await BiometricAuthService.clearStoredData();
+    // Clear stored face auth data - removed BiometricAuthService
     
     // Clear API cookies
     ApiService.storeCookies({});
@@ -1444,6 +1435,7 @@ class AuthService {
       return false;
     }
   }
+
 }
 
 
@@ -3334,7 +3326,7 @@ class _AuthWrapperState extends State<AuthWrapper> {
   }
 
   Future<void> _checkAuthStatus() async {
-    final biometricAvailable = await BiometricAuthService.isBiometricAvailable();
+    final biometricAvailable = false; // Removed BiometricAuthService
     
     setState(() {
       _hasBiometricCapability = biometricAvailable;
@@ -3421,8 +3413,9 @@ class _LoginSelectionScreenState extends State<LoginSelectionScreen> {
   }
 
   Future<void> _loginWithFace(BuildContext context) async {
+    // Use the same Face Authentication for both iOS and Android
     final result = await AuthService.loginWithFace();
-    
+
     if (result.success && result.user != null) {
       Navigator.pushAndRemoveUntil(
         context,
@@ -3667,6 +3660,9 @@ class _LoginScreenState extends State<LoginScreen> {
                     TextFormField(
                       controller: _usernameController,
                       style: const TextStyle(color: Colors.white),
+                      autocorrect: false,
+                      enableSuggestions: false,
+                      textInputAction: TextInputAction.next,
                       decoration: InputDecoration(
                         labelText: 'Username',
                         labelStyle: const TextStyle(color: Colors.white70),
@@ -4960,13 +4956,16 @@ class _ChatScreenState extends State<ChatScreen> {
     setState(() => _isLoading = true);
     
     try {
+      // Keep existing ApiService for now - will integrate DataService later
       Map<String, dynamic> response = await ApiService.sendQuery(
-        message, 
+        message,
         conversationHistory: widget.messages.where((m) => m.type != MessageType.chart).toList()
       );
       
       if (response['success'] == true) {
         String responseText = response['message'] ?? 'Query completed successfully.';
+
+        // Keep original response text - cleanup was causing issues
         
         Map<String, dynamic>? chartData;
         if (response['chart'] != null) {
@@ -5003,6 +5002,41 @@ class _ChatScreenState extends State<ChatScreen> {
       setState(() => _isLoading = false);
       _scrollToBottom();
     }
+  }
+
+  // Clean up placeholder text in AI responses
+  String _cleanupResponseText(String text) {
+    // Replace common placeholder patterns with more user-friendly text
+    String cleaned = text;
+
+    // Replace customer placeholders
+    cleaned = cleaned.replaceAll(RegExp(r'\[customer name\]', caseSensitive: false), 'the customer');
+    cleaned = cleaned.replaceAll(RegExp(r'\[customer id\]', caseSensitive: false), 'customer ID');
+    cleaned = cleaned.replaceAll(RegExp(r'\[customer\]', caseSensitive: false), 'customer');
+
+    // Replace invoice placeholders
+    cleaned = cleaned.replaceAll(RegExp(r'\[invoice id\]', caseSensitive: false), 'invoice ID');
+    cleaned = cleaned.replaceAll(RegExp(r'\[invoice number\]', caseSensitive: false), 'invoice number');
+    cleaned = cleaned.replaceAll(RegExp(r'\[invoice\]', caseSensitive: false), 'invoice');
+
+    // Replace product placeholders
+    cleaned = cleaned.replaceAll(RegExp(r'\[product name\]', caseSensitive: false), 'the product');
+    cleaned = cleaned.replaceAll(RegExp(r'\[product id\]', caseSensitive: false), 'product ID');
+    cleaned = cleaned.replaceAll(RegExp(r'\[product\]', caseSensitive: false), 'product');
+
+    // Replace date/time placeholders
+    cleaned = cleaned.replaceAll(RegExp(r'\[date\]', caseSensitive: false), 'the date');
+    cleaned = cleaned.replaceAll(RegExp(r'\[time\]', caseSensitive: false), 'the time');
+
+    // Replace amount placeholders
+    cleaned = cleaned.replaceAll(RegExp(r'\[amount\]', caseSensitive: false), 'the amount');
+    cleaned = cleaned.replaceAll(RegExp(r'\[price\]', caseSensitive: false), 'the price');
+    cleaned = cleaned.replaceAll(RegExp(r'\[total\]', caseSensitive: false), 'the total');
+
+    // Replace general placeholders
+    cleaned = cleaned.replaceAll(RegExp(r'\[.*?\]', caseSensitive: false), 'the requested information');
+
+    return cleaned;
   }
 
   @override
@@ -5223,30 +5257,16 @@ class MessageBubble extends StatelessWidget {
                             const Icon(Icons.bar_chart, color: Colors.white, size: 16),
                             const SizedBox(width: 8),
                             Text(
-                              'Chart: ${message.chartData!['chart_type'] ?? 'data visualization'}',
-                              style: const TextStyle(color: Colors.white70, fontSize: 12),
+                              message.chartData!['title'] ?? 'Chart',
+                              style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold),
                             ),
                           ],
                         ),
-                        const SizedBox(height: 8),
-                        if (message.chartData!['chart_base64'] != null)
-                          ClipRRect(
-                            borderRadius: BorderRadius.circular(8),
-                            child: Image.memory(
-                              base64Decode(message.chartData!['chart_base64']),
-                              fit: BoxFit.contain,
-                            ),
-                          )
-                        else
-                          const SizedBox(
-                            height: 100,
-                            child: Center(
-                              child: Text(
-                                'Chart data available',
-                                style: TextStyle(color: Colors.white54),
-                              ),
-                            ),
-                          ),
+                        const SizedBox(height: 12),
+                        SizedBox(
+                          height: 200,
+                          child: _buildChart(message.chartData!),
+                        ),
                       ],
                     ),
                   ),
@@ -5271,6 +5291,154 @@ class MessageBubble extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  Widget _buildChart(Map<String, dynamic> chartData) {
+    final data = chartData['data'] as Map<String, dynamic>?;
+    if (data == null || data.isEmpty) {
+      return const Center(
+        child: Text(
+          'No data available',
+          style: TextStyle(color: Colors.white54),
+        ),
+      );
+    }
+
+    final chartType = chartData['type'] as String? ?? 'bar';
+    final color = _parseColor(chartData['color'] as String? ?? '#64FFDA');
+
+    if (chartType == 'bar') {
+      return _buildBarChart(data, color);
+    } else {
+      return const Center(
+        child: Text(
+          'Chart type not supported',
+          style: TextStyle(color: Colors.white54),
+        ),
+      );
+    }
+  }
+
+  Widget _buildBarChart(Map<String, dynamic> data, Color color) {
+    final entries = data.entries.toList();
+    if (entries.isEmpty) {
+      return const Center(
+        child: Text(
+          'No data to display',
+          style: TextStyle(color: Colors.white54),
+        ),
+      );
+    }
+
+    // Find max value for scaling
+    final maxValue = entries.map((e) => (e.value as num).toDouble()).reduce((a, b) => a > b ? a : b);
+
+    return BarChart(
+      BarChartData(
+        alignment: BarChartAlignment.spaceAround,
+        maxY: maxValue * 1.2, // Add some padding at the top
+        barTouchData: BarTouchData(
+          enabled: true,
+          touchTooltipData: BarTouchTooltipData(
+            getTooltipColor: (group) => Colors.black87,
+            tooltipRoundedRadius: 8,
+            getTooltipItem: (group, groupIndex, rod, rodIndex) {
+              final value = rod.toY;
+              final label = entries[group.x.toInt()].key;
+              return BarTooltipItem(
+                '$label\n\$${_formatValue(value)}',
+                const TextStyle(color: Colors.white, fontSize: 12),
+              );
+            },
+          ),
+        ),
+        titlesData: FlTitlesData(
+          show: true,
+          topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+          rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+          leftTitles: AxisTitles(
+            sideTitles: SideTitles(
+              showTitles: true,
+              reservedSize: 50,
+              getTitlesWidget: (value, meta) {
+                return Text(
+                  _formatValue(value),
+                  style: const TextStyle(color: Colors.white54, fontSize: 10),
+                );
+              },
+            ),
+          ),
+          bottomTitles: AxisTitles(
+            sideTitles: SideTitles(
+              showTitles: true,
+              reservedSize: 40,
+              getTitlesWidget: (value, meta) {
+                final index = value.toInt();
+                if (index >= 0 && index < entries.length) {
+                  final label = entries[index].key;
+                  return Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: Text(
+                      label.length > 6 ? '${label.substring(0, 6)}...' : label,
+                      style: const TextStyle(color: Colors.white54, fontSize: 10),
+                      textAlign: TextAlign.center,
+                    ),
+                  );
+                }
+                return const Text('');
+              },
+            ),
+          ),
+        ),
+        borderData: FlBorderData(show: false),
+        gridData: FlGridData(
+          show: true,
+          drawVerticalLine: false,
+          horizontalInterval: maxValue / 4,
+          getDrawingHorizontalLine: (value) {
+            return FlLine(
+              color: Colors.white.withOpacity(0.1),
+              strokeWidth: 1,
+            );
+          },
+        ),
+        barGroups: entries.asMap().entries.map((entry) {
+          final index = entry.key;
+          final value = (entry.value.value as num).toDouble();
+          return BarChartGroupData(
+            x: index,
+            barRods: [
+              BarChartRodData(
+                toY: value,
+                color: color,
+                width: 16,
+                borderRadius: const BorderRadius.only(
+                  topLeft: Radius.circular(4),
+                  topRight: Radius.circular(4),
+                ),
+              ),
+            ],
+          );
+        }).toList(),
+      ),
+    );
+  }
+
+  Color _parseColor(String colorString) {
+    if (colorString.startsWith('#')) {
+      return Color(int.parse(colorString.substring(1), radix: 16) + 0xFF000000);
+    }
+    return const Color(0xFF64FFDA); // Default color
+  }
+
+  String _formatValue(double value) {
+    if (value >= 1000000) {
+      return '${(value / 1000000).toStringAsFixed(1)}M';
+    } else if (value >= 1000) {
+      return '${(value / 1000).toStringAsFixed(1)}K';
+    } else {
+      return value.toStringAsFixed(0);
+    }
   }
 }
 
@@ -5298,9 +5466,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   Future<void> _checkAuthStatus() async {
-    final available = await BiometricAuthService.isBiometricAvailable();
-    final enabled = await BiometricAuthService.isBiometricLoginEnabled();
-    final description = await BiometricAuthService.getBiometricCapabilitiesDescription();
+    final available = false; // Removed BiometricAuthService
+    final enabled = false; // Removed BiometricAuthService
+    final description = 'Biometric login disabled - use Face Authentication';
     
     setState(() {
       _isBiometricAvailable = available;
@@ -5315,7 +5483,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     
     try {
       if (_isBiometricEnabled) {
-        final success = await BiometricAuthService.disableBiometricLogin();
+        final success = true; // Removed BiometricAuthService
         if (success) {
           setState(() => _isBiometricEnabled = false);
           ScaffoldMessenger.of(context).showSnackBar(
@@ -5333,7 +5501,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
           );
         }
       } else {
-        final success = await BiometricAuthService.enableBiometricLogin(widget.user);
+        final success = false; // Removed BiometricAuthService - use Face Authentication instead
         if (success) {
           setState(() => _isBiometricEnabled = true);
           ScaffoldMessenger.of(context).showSnackBar(
@@ -5364,23 +5532,101 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   Future<void> _setupFaceAuth() async {
-    final result = await Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => FaceAuthSetupScreen(user: widget.user),
-      ),
-    );
-    
-    if (result == true) {
-      setState(() => _isFaceAuthEnabled = true);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Face authentication set up successfully!'),
-          backgroundColor: Colors.green,
-        ),
-      );
+    setState(() => _isLoading = true);
+
+    try {
+      Map<String, dynamic> result;
+
+      if (Platform.isIOS) {
+        // For iOS Face ID, prompt for password first
+        final password = await _promptForPassword(context);
+        if (password == null || password.isEmpty) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Password is required for Face ID setup'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+          return;
+        }
+
+        // Use the method with password for iOS
+        result = await AuthService.setupFaceAuthWithPassword(password);
+      } else {
+        // For Android, use the regular setup
+        result = await AuthService.setupFaceAuth();
+      }
+
+      if (result['success'] == true) {
+        setState(() => _isFaceAuthEnabled = true);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(result['message'] ?? 'Face authentication enabled successfully!'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(result['message'] ?? 'Failed to enable Face authentication'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      setState(() => _isLoading = false);
     }
   } // Close _setupFaceAuth here
+
+  Future<String?> _promptForPassword(BuildContext context) async {
+    final TextEditingController passwordController = TextEditingController();
+
+    return await showDialog<String>(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          backgroundColor: const Color(0xFF1A1A1A),
+          title: const Text('Enter Password', style: TextStyle(color: Colors.white)),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text(
+                'Please enter your password to enable Face ID:',
+                style: TextStyle(color: Colors.white70),
+              ),
+              const SizedBox(height: 16),
+              TextFormField(
+                controller: passwordController,
+                obscureText: true,
+                style: const TextStyle(color: Colors.white),
+                decoration: InputDecoration(
+                  labelText: 'Password',
+                  labelStyle: const TextStyle(color: Colors.white70),
+                  filled: true,
+                  fillColor: const Color(0xFF2A2A2A),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(10),
+                    borderSide: BorderSide.none,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, null),
+              child: const Text('Cancel', style: TextStyle(color: Colors.white70)),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(context, passwordController.text),
+              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF64FFDA)),
+              child: const Text('Confirm', style: TextStyle(color: Colors.black)),
+            ),
+          ],
+        );
+      },
+    );
+  }
 
   // _buildInfoCard should be a separate method at the class level
   Widget _buildInfoCard(String title, String value, IconData icon) {

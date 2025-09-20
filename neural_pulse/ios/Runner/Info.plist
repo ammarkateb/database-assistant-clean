@@ -5,7 +5,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>Flutter Frontend</string>
+	<string>Neural Pulse</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -45,5 +45,11 @@
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>Neural Pulse uses the camera for facial recognition authentication to securely access your account.</string>
+	<key>NSFaceIDUsageDescription</key>
+	<string>Neural Pulse uses Face ID for secure and convenient authentication.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Neural Pulse needs access to your photo library to select profile pictures and manage receipts.</string>
 </dict>
 </plist>
