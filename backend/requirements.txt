@@ -28,3 +28,7 @@ python-dotenv==1.0.0
 
 # Utilities
 Pillow==10.1.0
+
+# Ollama integration
+ollama==0.3.1
+aiohttp==3.9.1

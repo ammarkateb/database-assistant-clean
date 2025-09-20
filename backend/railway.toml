@@ -1,0 +1,22 @@
+[build]
+builder = "dockerfile"
+dockerfilePath = "Dockerfile.ollama"
+
+[deploy]
+startCommand = "./start.sh"
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 3
+
+[env]
+PORT = "8000"
+OLLAMA_HOST = "0.0.0.0:11434"
+OLLAMA_MODELS = "phi3:mini"
+
+# Memory and CPU for Phi-3 Mini
+[resources]
+memoryGB = 4
+vCPUs = 2
+
+[healthcheck]
+path = "/ollama/health"
+port = 8000
