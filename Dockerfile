@@ -1,23 +1,14 @@
-# Use Ubuntu as base for better Ollama compatibility
-FROM ubuntu:22.04
+# Use Python slim image for faster builds
+FROM python:3.11-slim
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
+# Install minimal system dependencies and Ollama in one layer
+RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
-    bash \
-    python3 \
-    python3-pip \
-    python3-venv \
-    wget \
     ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
-
-# Create symlink for python
-RUN ln -s /usr/bin/python3 /usr/bin/python
-
-# Install Ollama manually (more reliable than install script in Docker)
-RUN curl -L https://github.com/ollama/ollama/releases/latest/download/ollama-linux-amd64 -o /usr/local/bin/ollama && \
-    chmod +x /usr/local/bin/ollama
+    && curl -L https://github.com/ollama/ollama/releases/latest/download/ollama-linux-amd64 -o /usr/local/bin/ollama \
+    && chmod +x /usr/local/bin/ollama \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
 # Set working directory
 WORKDIR /app
