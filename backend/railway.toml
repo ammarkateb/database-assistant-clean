@@ -1,6 +1,6 @@
 [build]
 builder = "dockerfile"
-dockerfilePath = "Dockerfile.ollama"
+dockerfilePath = "Dockerfile"
 
 [deploy]
 startCommand = "./start.sh"
