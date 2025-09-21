@@ -2,7 +2,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 class ApiService {
-  static const String baseUrl = 'https://database-assistant-clean-production.up.railway.app';
+  static const String baseUrl = 'http://192.168.8.155:5000';
   static Map<String, String> _cookies = {};
 
   static Map<String, String> _getHeaders() {
@@ -46,7 +46,7 @@ class ApiService {
   static Future<Map<String, dynamic>> login(String username, String password) async {
     try {
       final response = await http.post(
-        Uri.parse('$baseUrl/auth/login'),
+        Uri.parse('$baseUrl/login'),
         headers: _getHeaders(),
         body: json.encode({
           'username': username,
@@ -84,7 +84,7 @@ class ApiService {
   static Future<Map<String, dynamic>> register(String username, String email, String password) async {
     try {
       final response = await http.post(
-        Uri.parse('$baseUrl/auth/register'),
+        Uri.parse('$baseUrl/register'),
         headers: _getHeaders(),
         body: json.encode({
           'username': username,

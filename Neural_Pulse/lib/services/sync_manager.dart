@@ -11,7 +11,7 @@ class SyncManager {
   SyncManager._internal();
 
   // Configuration
-  static const String baseUrl = 'https://database-assistant-clean-production.up.railway.app';
+  static const String baseUrl = 'http://192.168.8.155:5000';
   static const Duration syncInterval = Duration(minutes: 5);
   static const int maxRetryAttempts = 3;
 

@@ -49,7 +49,7 @@ class PlatformFaceAuth {
         // Need to login with the retrieved credentials to get user data
         try {
           final response = await http.post(
-            Uri.parse('https://database-assistant-clean-production.up.railway.app/login'),
+            Uri.parse('http://192.168.8.155:5000/login'),
             headers: {'Content-Type': 'application/json'},
             body: json.encode({
               'username': result['username'],

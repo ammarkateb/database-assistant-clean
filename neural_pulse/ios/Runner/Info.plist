@@ -51,5 +51,10 @@
 	<string>Neural Pulse uses Face ID for secure and convenient authentication.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Neural Pulse needs access to your photo library to select profile pictures and manage receipts.</string>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<true/>
+	</dict>
 </dict>
 </plist>
