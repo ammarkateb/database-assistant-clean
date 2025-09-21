@@ -15,9 +15,8 @@ RUN apt-get update && apt-get install -y \
 # Create symlink for python
 RUN ln -s /usr/bin/python3 /usr/bin/python
 
-# Install Ollama manually (more reliable than install script in Docker)
-RUN curl -L https://github.com/ollama/ollama/releases/latest/download/ollama-linux-amd64 -o /usr/local/bin/ollama && \
-    chmod +x /usr/local/bin/ollama
+# Install Ollama using the official install script
+RUN curl -fsSL https://ollama.com/install.sh | sh
 
 # Set working directory
 WORKDIR /app
