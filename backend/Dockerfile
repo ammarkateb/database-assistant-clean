@@ -23,11 +23,11 @@ RUN curl -L https://github.com/ollama/ollama/releases/latest/download/ollama-lin
 WORKDIR /app
 
 # Copy requirements and install Python dependencies
-COPY backend/requirements.txt .
+COPY requirements.txt .
 RUN pip3 install --no-cache-dir -r requirements.txt
 
 # Copy application code
-COPY backend/ .
+COPY . .
 
 # Make start script executable
 RUN chmod +x start.sh
