@@ -1,22 +1,20 @@
-# Use Ubuntu as base for better Ollama compatibility
-FROM ubuntu:22.04
+# Use a Python base image and install Ollama differently
+FROM python:3.11-slim
 
-# Install system dependencies
+# Install system dependencies including glibc and other requirements
 RUN apt-get update && apt-get install -y \
     curl \
     bash \
-    python3 \
-    python3-pip \
-    python3-venv \
     wget \
     ca-certificates \
+    procps \
     && rm -rf /var/lib/apt/lists/*
 
-# Create symlink for python
-RUN ln -s /usr/bin/python3 /usr/bin/python
-
-# Install Ollama using the official install script
-RUN curl -fsSL https://ollama.com/install.sh | sh
+# Download and install Ollama binary with verification
+RUN curl -L https://github.com/ollama/ollama/releases/download/v0.1.47/ollama-linux-amd64 -o /tmp/ollama && \
+    chmod +x /tmp/ollama && \
+    mv /tmp/ollama /usr/local/bin/ollama && \
+    /usr/local/bin/ollama --version
 
 # Set working directory
 WORKDIR /app
