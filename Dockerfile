@@ -27,7 +27,7 @@ COPY backend/requirements.txt .
 RUN pip3 install --no-cache-dir -r requirements.txt
 
 # Copy application code
-COPY backend/ .
+COPY backend/* ./
 
 # Make start script executable
 RUN chmod +x start.sh
