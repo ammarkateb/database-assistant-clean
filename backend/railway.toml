@@ -1,10 +1,10 @@
 [build]
 builder = "dockerfile"
-dockerfilePath = "backend/Dockerfile"
-buildCommand = "cd backend"
+dockerfilePath = "Dockerfile"
+watchPatterns = ["backend/**"]
 
 [deploy]
-startCommand = "cd backend && ./start.sh"
+startCommand = "./start.sh"
 restartPolicyType = "on_failure"
 restartPolicyMaxRetries = 3
 
