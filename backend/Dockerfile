@@ -20,7 +20,7 @@ RUN pip3 install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY . .
 
-# Remove start.sh dependency for clean deployment
+# Clean deployment without Ollama or start.sh dependencies
 
 # Expose port
 EXPOSE 8000
