@@ -9,7 +9,7 @@ import json
 from datetime import datetime, timedelta
 from functools import wraps
 
-# Setup logging
+# Setup logging - Force redeploy for endpoint registration
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
