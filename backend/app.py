@@ -22,7 +22,7 @@ app.secret_key = os.getenv('SECRET_KEY', 'your-secret-key-change-this-in-product
 
 # Initialize components
 DB_AVAILABLE = False
-AI_AVAILABLE = False
+AI_AVAILABLE = True  # Enable for cloud deployment with simple AI
 FACIAL_AUTH_AVAILABLE = False
 db_assistant = None
 facial_auth = None

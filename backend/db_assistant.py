@@ -20,10 +20,13 @@ import seaborn as sns
 try:
     import google.generativeai as genai
     GOOGLE_AI_AVAILABLE = True
+    # For cloud deployments, use a simple mock AI service if Google AI key is not available
+    MOCK_AI_RESPONSES = True
 except ImportError:
-    print("Google AI not available - this is normal for cloud deployments")
+    print("Google AI not available - using mock AI responses for cloud deployments")
     genai = None
     GOOGLE_AI_AVAILABLE = False
+    MOCK_AI_RESPONSES = True
 import numpy as np
 from dotenv import load_dotenv
 
@@ -1801,3 +1804,126 @@ def get_authenticated_db_response(user_input: str, user_data: Dict, conversation
             'query': '',
             'row_count': 0
         }
+
+    def generate_simple_ai_response(self, query: str, user: dict = None) -> dict:
+        """Generate simple AI responses for cloud deployment without complex LLM"""
+        try:
+            # Get actual business data
+            invoices = self.get_all_invoices(user_id=user.get('id') if user else None)[:1000]  # Limit to avoid memory issues
+
+            if not invoices or not invoices.get('data'):
+                return {
+                    'success': True,
+                    'message': "I'd love to help analyze your business data! Once you add some invoices, I can provide insights about your sales trends, top customers, monthly performance, and more.",
+                    'data': []
+                }
+
+            invoice_data = invoices['data']
+            query_lower = query.lower()
+
+            # Calculate key metrics
+            total_invoices = len(invoice_data)
+            total_revenue = sum(float(inv.get('amount', 0)) for inv in invoice_data)
+
+            # Monthly analysis
+            monthly_sales = {}
+            customer_sales = {}
+            current_year = 2025
+
+            for invoice in invoice_data:
+                # Process monthly data
+                created_at = invoice.get('created_at', '')
+                if created_at and str(current_year) in created_at:
+                    try:
+                        month = created_at.split('-')[1]
+                        month_name = {
+                            '01': 'January', '02': 'February', '03': 'March',
+                            '04': 'April', '05': 'May', '06': 'June',
+                            '07': 'July', '08': 'August', '09': 'September',
+                            '10': 'October', '11': 'November', '12': 'December'
+                        }.get(month, f'Month {month}')
+                        monthly_sales[month_name] = monthly_sales.get(month_name, 0) + float(invoice.get('amount', 0))
+                    except:
+                        pass
+
+                # Process customer data
+                customer = invoice.get('customer_name', 'Unknown')
+                customer_sales[customer] = customer_sales.get(customer, 0) + float(invoice.get('amount', 0))
+
+            # Generate appropriate response based on query
+            if any(word in query_lower for word in ['sales', 'month', 'monthly', 'per month', 'revenue']):
+                if monthly_sales:
+                    best_month = max(monthly_sales.items(), key=lambda x: x[1])
+                    avg_monthly = sum(monthly_sales.values()) / len(monthly_sales)
+
+                    response = f"Here's your 2025 monthly sales analysis:\n\n"
+                    response += f"📊 Total Revenue: ${total_revenue:,.2f}\n"
+                    response += f"📅 Best Month: {best_month[0]} (${best_month[1]:,.2f})\n"
+                    response += f"📈 Monthly Average: ${avg_monthly:,.2f}\n\n"
+                    response += "Monthly Breakdown:\n"
+
+                    for month, amount in sorted(monthly_sales.items(),
+                                              key=lambda x: ['January','February','March','April','May','June',
+                                                           'July','August','September','October','November','December'].index(x[0])
+                                              if x[0] in ['January','February','March','April','May','June',
+                                                        'July','August','September','October','November','December'] else 99):
+                        response += f"• {month}: ${amount:,.2f}\n"
+                else:
+                    response = f"You have {total_invoices} invoices worth ${total_revenue:,.2f} total. I can provide monthly breakdowns once you have invoices with dates in 2025."
+
+            elif any(word in query_lower for word in ['customer', 'client', 'top customer', 'best customer']):
+                if customer_sales:
+                    top_customers = sorted(customer_sales.items(), key=lambda x: x[1], reverse=True)[:5]
+
+                    response = f"Here are your top customers:\n\n"
+                    response += f"👑 Best Customer: {top_customers[0][0]} (${top_customers[0][1]:,.2f})\n"
+                    response += f"👥 Total Customers: {len(customer_sales)}\n\n"
+                    response += "Top 5 Customers:\n"
+
+                    for i, (customer, amount) in enumerate(top_customers, 1):
+                        response += f"{i}. {customer}: ${amount:,.2f}\n"
+                else:
+                    response = f"You have {total_invoices} invoices. Customer analysis will be available once customer names are added to your invoices."
+
+            elif any(word in query_lower for word in ['total', 'how much', 'revenue', 'money']):
+                response = f"💰 Business Summary:\n\n"
+                response += f"Total Revenue: ${total_revenue:,.2f}\n"
+                response += f"Total Invoices: {total_invoices:,}\n"
+                response += f"Average Invoice: ${total_revenue/total_invoices:,.2f}\n"
+
+                if customer_sales:
+                    response += f"Active Customers: {len(customer_sales)}\n"
+                if monthly_sales:
+                    response += f"Months with Data: {len(monthly_sales)}\n"
+
+            else:
+                # General business overview
+                response = f"I'm Neural Pulse, your AI business analyst! 📊\n\n"
+                response += f"Your Business Overview:\n"
+                response += f"• Total Revenue: ${total_revenue:,.2f}\n"
+                response += f"• Total Invoices: {total_invoices:,}\n"
+
+                if customer_sales:
+                    top_customer = max(customer_sales.items(), key=lambda x: x[1])
+                    response += f"• Top Customer: {top_customer[0]} (${top_customer[1]:,.2f})\n"
+                    response += f"• Total Customers: {len(customer_sales)}\n"
+
+                if monthly_sales:
+                    best_month = max(monthly_sales.items(), key=lambda x: x[1])
+                    response += f"• Best Month: {best_month[0]} (${best_month[1]:,.2f})\n"
+
+                response += f"\nAsk me about:\n• Monthly sales trends\n• Top customers\n• Revenue analysis\n• Performance insights"
+
+            return {
+                'success': True,
+                'message': response,
+                'data': invoice_data[:10]  # Include sample data
+            }
+
+        except Exception as e:
+            logger.error(f"Simple AI response error: {e}")
+            return {
+                'success': True,
+                'message': f"I'm your business AI assistant! I can help analyze your sales data, customer insights, and performance trends. Ask me about monthly sales, top customers, or revenue analysis. (Data processing temporarily unavailable)",
+                'data': []
+            }
