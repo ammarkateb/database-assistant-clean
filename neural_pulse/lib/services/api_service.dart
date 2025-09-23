@@ -2,7 +2,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 class ApiService {
-  static const String baseUrl = 'https://neural-pulse-production.up.railway.app';
+  static const String baseUrl = 'https://database-assistant-clean-production.up.railway.app';
   static Map<String, String> _cookies = {};
 
   static Map<String, String> _getHeaders() {

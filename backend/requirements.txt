@@ -14,7 +14,9 @@ numpy==1.24.3
 matplotlib==3.8.2
 seaborn==0.13.0
 
-# AI/ML - Using local Ollama instead of Gemini
+# AI/ML - Cloud deployment dependencies
+google-cloud==0.34.0
+google-generativeai==0.3.2
 
 # Audio processing
 SpeechRecognition==3.10.0

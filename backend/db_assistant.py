@@ -17,7 +17,13 @@ import psycopg2
 from psycopg2.pool import SimpleConnectionPool
 import matplotlib.pyplot as plt
 import seaborn as sns
-import google.generativeai as genai
+try:
+    import google.generativeai as genai
+    GOOGLE_AI_AVAILABLE = True
+except ImportError:
+    print("Google AI not available - this is normal for cloud deployments")
+    genai = None
+    GOOGLE_AI_AVAILABLE = False
 import numpy as np
 from dotenv import load_dotenv
 
@@ -666,6 +672,11 @@ class DatabaseAssistant:
     
     def setup_ai_model(self):
         """Setup Gemini AI model"""
+        if not GOOGLE_AI_AVAILABLE:
+            logger.info("Google AI libraries not available - this is expected in cloud environments")
+            self.model = None
+            return
+
         if not self.api_key:
             logger.warning("No API key available - AI model will not be initialized")
             self.model = None
@@ -676,18 +687,42 @@ class DatabaseAssistant:
         self.model = None
     
     def setup_database_pool(self):
-        """Setup database connection pool"""
+        """Setup database connection pool with cloud environment handling"""
         try:
             print(f"=== ATTEMPTING DB CONNECTION ===")
-            print(f"DB params: {self.db_params}")
-            
+            print(f"Host: {self.db_params['host']}")
+            print(f"Port: {self.db_params['port']}")
+            print(f"Database: {self.db_params['dbname']}")
+            print(f"User: {self.db_params['user']}")
+            print(f"SSL Mode: {self.db_params['sslmode']}")
+
+            # Try to establish connection with cloud-specific handling
             self.connection_pool = SimpleConnectionPool(
                 minconn=1, maxconn=5, **self.db_params
             )
             print("=== DB CONNECTION SUCCESS ===")
-            logger.info("Database connection pool created")
+            logger.info("Database connection pool created successfully")
+
+            # Test the connection
+            with self.get_db_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT 1")
+                cursor.fetchone()
+                print("=== DB CONNECTION TEST PASSED ===")
+
+        except psycopg2.OperationalError as e:
+            print(f"=== DB CONNECTION FAILED - OPERATIONAL ERROR ===")
+            print(f"Error: {e}")
+            if "authentication failed" in str(e).lower():
+                print("Hint: Check username and password")
+            elif "could not connect" in str(e).lower():
+                print("Hint: Check host and port, ensure database is accessible")
+            elif "ssl" in str(e).lower():
+                print("Hint: SSL connection issue, check SSL requirements")
+            logger.error(f"Database operational error: {e}")
+            raise
         except Exception as e:
-            print(f"=== DB CONNECTION FAILED ===")
+            print(f"=== DB CONNECTION FAILED - UNEXPECTED ERROR ===")
             print(f"Error: {e}")
             print(f"Error type: {type(e)}")
             import traceback
