@@ -111,10 +111,20 @@ except Exception as e:
     print(f"✗ Ollama initialization error: {e}")
 
 def call_ollama(prompt):
-    """Call Ollama API with phi3:mini model"""
+    """Call Ollama API with phi3:mini model - fallback to simple AI for cloud"""
     if not AI_AVAILABLE:
         logger.warning("Ollama not available - returning fallback response")
         return "Ollama not available"
+
+    # For cloud deployment, use simple AI instead of Ollama
+    if db_assistant and hasattr(db_assistant, 'generate_simple_ai_response'):
+        logger.info("Using simple AI service for cloud deployment")
+        try:
+            ai_response = db_assistant.generate_simple_ai_response(prompt)
+            return ai_response.get('message', 'AI response not available')
+        except Exception as e:
+            logger.error(f"Simple AI error: {e}")
+            return "AI processing temporarily unavailable"
 
     try:
         logger.info(f"Calling Ollama with prompt length: {len(prompt)} characters")
