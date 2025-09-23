@@ -2,21 +2,16 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
-import 'package:local_auth/local_auth.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'dart:io';
-import 'dart:typed_data';
 import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
 import 'package:fl_chart/fl_chart.dart';
 
 // Import our new services (integrating offline functionality)
 import 'services/data_service.dart';
-import 'services/sync_manager.dart';
 import 'services/local_database.dart';
 import 'services/platform_face_auth.dart';
-import 'services/smart_ai_service.dart';
 // Removed biometric service - using Face Authentication only
 
 
@@ -58,11 +53,9 @@ class MyApp extends StatelessWidget {
           secondary: Color(0xFF7C4DFF),    // Purple accent
           tertiary: Color(0xFF40C4FF),     // Light blue accent
           surface: Color(0xFF1B263B),      // Dark blue-gray surfaces
-          background: Color(0xFF0D1B2A),   // Deep navy background
           onPrimary: Color(0xFF000000),    // Black text on primary
           onSecondary: Color(0xFFFFFFFF),  // White text on secondary
           onSurface: Color(0xFFFFFFFF),    // White text on surfaces
-          onBackground: Color(0xFFE0E1DD), // Light gray text on background
         ),
         appBarTheme: const AppBarTheme(
           backgroundColor: Color(0xFF1B263B),
@@ -73,7 +66,7 @@ class MyApp extends StatelessWidget {
         elevatedButtonTheme: ElevatedButtonThemeData(
           style: ElevatedButton.styleFrom(
             elevation: 8,
-            shadowColor: const Color(0xFF64FFDA).withOpacity(0.3),
+            shadowColor: const Color(0xFF64FFDA).withValues(alpha: 0.3),
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(12),
               side: const BorderSide(color: Colors.white, width: 1.5),
@@ -677,7 +670,7 @@ class FaceAuthService {
 
 
 class ApiService {
-  static const String baseUrl = 'http://192.168.8.155:5000';
+  static const String baseUrl = 'https://neural-pulse-production.up.railway.app';
   static Map<String, String> _cookies = {};
   
   static Map<String, String> _getHeaders() {
@@ -1039,8 +1032,22 @@ class ApiService {
   // Query and Chat Methods
   static Future<Map<String, dynamic>> sendQuery(String query, {List<Message>? conversationHistory}) async {
     try {
-      // First try Smart AI service (offline/cached analysis)
-      final smartResponse = await SmartAIService.processQuery(query);
+      // Use direct HTTP call with our cookie management
+      final response = await http.post(
+        Uri.parse('$baseUrl/query'),
+        headers: _getHeaders(),
+        body: json.encode({
+          'query': query,
+          'conversation_history': conversationHistory?.map((m) => {
+            'sender': m.sender,
+            'content': m.content,
+            'type': m.type.toString(),
+            'timestamp': m.timestamp.toIso8601String()
+          }).toList() ?? []
+        }),
+      ).timeout(const Duration(seconds: 30));
+
+      final smartResponse = json.decode(response.body);
 
       // Store the conversation locally for future context
       if (conversationHistory != null && conversationHistory.isNotEmpty) {
@@ -1087,7 +1094,7 @@ class ApiService {
 }
 
 class AuthService {
-  static const String baseUrl = 'http://192.168.8.155:5000';
+  static const String baseUrl = 'https://neural-pulse-production.up.railway.app';
   static User? _currentUser;
 
   static User? get currentUser => _currentUser;
@@ -1531,7 +1538,7 @@ class _UserEditScreenState extends State<UserEditScreen> {
     final passwordController = TextEditingController();
     final confirmController = TextEditingController();
 
-    final result = await showDialog<bool>(
+    await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         backgroundColor: const Color(0xFF1A1A1A),
@@ -1713,7 +1720,7 @@ class _UserEditScreenState extends State<UserEditScreen> {
                     decoration: BoxDecoration(
                       color: const Color(0xFF1A1A1A),
                       borderRadius: BorderRadius.circular(15),
-                      border: Border.all(color: Colors.white.withOpacity(0.2)),
+                      border: Border.all(color: Colors.white.withValues(alpha: 0.2)),
                     ),
                     child: Column(
                       children: [
@@ -1739,7 +1746,7 @@ class _UserEditScreenState extends State<UserEditScreen> {
                         Container(
                           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
                           decoration: BoxDecoration(
-                            color: widget.user.roleColor.withOpacity(0.2),
+                            color: widget.user.roleColor.withValues(alpha: 0.2),
                             borderRadius: BorderRadius.circular(12),
                             border: Border.all(color: widget.user.roleColor.withValues(alpha: 0.5)),
                           ),
@@ -1753,7 +1760,7 @@ class _UserEditScreenState extends State<UserEditScreen> {
                           Container(
                             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                             decoration: BoxDecoration(
-                              color: Colors.blue.withOpacity(0.2),
+                              color: Colors.blue.withValues(alpha: 0.2),
                               borderRadius: BorderRadius.circular(8),
                               border: Border.all(color: Colors.blue.withValues(alpha: 0.5)),
                             ),
@@ -1874,7 +1881,7 @@ class _UserEditScreenState extends State<UserEditScreen> {
                       border: Border.all(color: Colors.white30, width: 1),
                     ),
                     child: DropdownButtonFormField<String>(
-                      value: _selectedRole,
+                      initialValue: _selectedRole,
                       style: const TextStyle(color: Colors.white),
                       decoration: const InputDecoration(
                         border: InputBorder.none,
@@ -1918,7 +1925,7 @@ class _UserEditScreenState extends State<UserEditScreen> {
                               _isActive = value;
                             });
                           },
-                          activeColor: const Color(0xFF1B263B),
+                          activeThumbColor: const Color(0xFF1B263B),
                         ),
                         Text(
                           _isActive ? 'Active' : 'Inactive',
@@ -2247,7 +2254,7 @@ class _EnhancedInvoiceListScreenState extends State<EnhancedInvoiceListScreen> {
           decoration: BoxDecoration(
             color: const Color(0xFF1A1A1A),
             borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: Colors.white.withOpacity(0.2)),
+            border: Border.all(color: Colors.white.withValues(alpha: 0.2)),
           ),
           child: ListTile(
             leading: Container(
@@ -2283,9 +2290,9 @@ class _EnhancedInvoiceListScreenState extends State<EnhancedInvoiceListScreen> {
                     margin: const EdgeInsets.only(top: 4),
                     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                     decoration: BoxDecoration(
-                      color: invoice.status == 'paid' ? Colors.green.withOpacity(0.2) : 
-                             invoice.status == 'pending' ? Colors.orange.withOpacity(0.2) :
-                             Colors.red.withOpacity(0.2),
+                      color: invoice.status == 'paid' ? Colors.green.withValues(alpha: 0.2) : 
+                             invoice.status == 'pending' ? Colors.orange.withValues(alpha: 0.2) :
+                             Colors.red.withValues(alpha: 0.2),
                       borderRadius: BorderRadius.circular(8),
                     ),
                     child: Text(
@@ -2456,7 +2463,7 @@ class _EnhancedInvoiceListScreenState extends State<EnhancedInvoiceListScreen> {
               decoration: BoxDecoration(
                 color: const Color(0xFF1A1A1A),
                 borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: Colors.white.withOpacity(0.2)),
+                border: Border.all(color: Colors.white.withValues(alpha: 0.2)),
               ),
               child: ListTile(
                 leading: Container(
@@ -2912,7 +2919,7 @@ class _InvoiceEditScreenState extends State<InvoiceEditScreen> {
                 const SizedBox(height: 16),
 
                 DropdownButtonFormField<String>(
-                  value: _selectedStatus,
+                  initialValue: _selectedStatus,
                   style: const TextStyle(color: Colors.white),
                   decoration: InputDecoration(
                     labelText: 'Status',
@@ -3099,7 +3106,7 @@ class _FaceAuthSetupScreenState extends State<FaceAuthSetupScreen> {
                   decoration: BoxDecoration(
                     color: const Color(0xFF1A1A1A),
                     borderRadius: BorderRadius.circular(15),
-                    border: Border.all(color: Colors.white.withOpacity(0.2)),
+                    border: Border.all(color: Colors.white.withValues(alpha: 0.2)),
                   ),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -3175,7 +3182,7 @@ class _FaceAuthSetupScreenState extends State<FaceAuthSetupScreen> {
                   decoration: BoxDecoration(
                     color: const Color(0xFF1A1A1A),
                     borderRadius: BorderRadius.circular(15),
-                    border: Border.all(color: Colors.white.withOpacity(0.2)),
+                    border: Border.all(color: Colors.white.withValues(alpha: 0.2)),
                   ),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -3393,24 +3400,6 @@ class LoginSelectionScreen extends StatefulWidget {
 }
 
 class _LoginSelectionScreenState extends State<LoginSelectionScreen> {
-  Future<void> _loginWithBiometric(BuildContext context) async {
-    final result = await AuthService.loginWithBiometric();
-    
-    if (result.success && result.user != null) {
-      Navigator.pushAndRemoveUntil(
-        context,
-        MaterialPageRoute(builder: (context) => MainNavigationScreen(user: result.user!)),
-        (route) => false,
-      );
-    } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(result.error ?? 'Biometric authentication failed'),
-          backgroundColor: Colors.red,
-        ),
-      );
-    }
-  }
 
   Future<void> _loginWithFace(BuildContext context) async {
     // Use the same Face Authentication for both iOS and Android
@@ -3487,24 +3476,6 @@ class _LoginSelectionScreenState extends State<LoginSelectionScreen> {
                   
                   const SizedBox(height: 16),
                   
-                  // BIOMETRIC LOGIN - TEMPORARILY COMMENTED OUT
-                  // if (widget.hasBiometricCapability) ...[
-                  //   SizedBox(
-                  //     width: double.infinity,
-                  //     child: OutlinedButton.icon(
-                  //       onPressed: () => _loginWithBiometric(context),
-                  //       style: OutlinedButton.styleFrom(
-                  //         side: const BorderSide(color: Colors.white, width: 2),
-                  //         foregroundColor: Colors.white,
-                  //         padding: const EdgeInsets.symmetric(vertical: 16),
-                  //         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-                  //       ),
-                  //       icon: const Icon(Icons.fingerprint, color: Colors.white),
-                  //       label: const Text('Login with Biometric', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
-                  //     ),
-                  //   ),
-                  //   const SizedBox(height: 16),
-                  // ],
                   
                   SizedBox(
                     width: double.infinity,
@@ -3521,29 +3492,6 @@ class _LoginSelectionScreenState extends State<LoginSelectionScreen> {
                     ),
                   ),
                   
-                  // BIOMETRIC STATUS - TEMPORARILY COMMENTED OUT
-                  // if (widget.hasBiometricCapability) ...[
-                  //   const SizedBox(height: 16),
-                  //   Container(
-                  //     width: double.infinity,
-                  //     padding: const EdgeInsets.all(16),
-                  //     decoration: BoxDecoration(
-                  //       color: Colors.grey.withOpacity(0.2),
-                  //       borderRadius: BorderRadius.circular(15),
-                  //     ),
-                  //     child: const Row(
-                  //       mainAxisAlignment: MainAxisAlignment.center,
-                  //       children: [
-                  //         Icon(Icons.info, color: Colors.white70, size: 20),
-                  //         SizedBox(width: 8),
-                  //         Text(
-                  //           'Biometric authentication not available',
-                  //           style: TextStyle(color: Colors.white70, fontSize: 14),
-                  //         ),
-                  //       ],
-                  //     ),
-                  //   ),
-                  // ],
                 ],
               ),
             ),
@@ -3889,7 +3837,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
             margin: const EdgeInsets.only(right: 16),
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
             decoration: BoxDecoration(
-              color: widget.user.roleColor.withOpacity(0.2),
+              color: widget.user.roleColor.withValues(alpha: 0.2),
               borderRadius: BorderRadius.circular(15),
               border: Border.all(color: widget.user.roleColor.withValues(alpha: 0.5)),
             ),
@@ -3976,7 +3924,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
       bottomNavigationBar: Container(
         decoration: BoxDecoration(
           color: const Color(0xFF1A1A1A),
-          border: Border(top: BorderSide(color: Colors.white.withOpacity(0.2))),
+          border: Border(top: BorderSide(color: Colors.white.withValues(alpha: 0.2))),
         ),
         child: BottomNavigationBar(
           currentIndex: _selectedIndex,
@@ -4196,7 +4144,7 @@ class _InvoiceListScreenState extends State<InvoiceListScreen> {
                                   decoration: BoxDecoration(
                                     color: const Color(0xFF1A1A1A),
                                     borderRadius: BorderRadius.circular(12),
-                                    border: Border.all(color: Colors.white.withOpacity(0.2)),
+                                    border: Border.all(color: Colors.white.withValues(alpha: 0.2)),
                                   ),
                                   child: ListTile(
                                     leading: Container(
@@ -4232,9 +4180,9 @@ class _InvoiceListScreenState extends State<InvoiceListScreen> {
                                             margin: const EdgeInsets.only(top: 4),
                                             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                                             decoration: BoxDecoration(
-                                              color: invoice.status == 'paid' ? Colors.green.withOpacity(0.2) : 
-                                                     invoice.status == 'pending' ? Colors.orange.withOpacity(0.2) :
-                                                     Colors.red.withOpacity(0.2),
+                                              color: invoice.status == 'paid' ? Colors.green.withValues(alpha: 0.2) : 
+                                                     invoice.status == 'pending' ? Colors.orange.withValues(alpha: 0.2) :
+                                                     Colors.red.withValues(alpha: 0.2),
                                               borderRadius: BorderRadius.circular(8),
                                             ),
                                             child: Text(
@@ -4493,7 +4441,7 @@ class _InvoiceCreateScreenState extends State<InvoiceCreateScreen> {
                   decoration: BoxDecoration(
                     color: const Color(0xFF1A1A1A).withValues(alpha: 0.8),
                     borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: Colors.white.withOpacity(0.2)),
+                    border: Border.all(color: Colors.white.withValues(alpha: 0.2)),
                   ),
                   child: _selectedImage != null
                       ? ClipRRect(
@@ -4604,7 +4552,7 @@ class _InvoiceCreateScreenState extends State<InvoiceCreateScreen> {
                 
                 // Status Dropdown
                 DropdownButtonFormField<String>(
-                  value: _selectedStatus,
+                  initialValue: _selectedStatus,
                   style: const TextStyle(color: Colors.white),
                   decoration: InputDecoration(
                     labelText: 'Status',
@@ -4816,7 +4764,7 @@ class InvoiceDetailScreen extends StatelessWidget {
                   height: 300,
                   decoration: BoxDecoration(
                     borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: Colors.white.withOpacity(0.2)),
+                    border: Border.all(color: Colors.white.withValues(alpha: 0.2)),
                   ),
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(12),
@@ -4876,7 +4824,7 @@ class InvoiceDetailScreen extends StatelessWidget {
       decoration: BoxDecoration(
         color: const Color(0xFF1A1A1A),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.white.withOpacity(0.2)),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.2)),
       ),
       child: Row(
         children: [
@@ -5004,40 +4952,6 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  // Clean up placeholder text in AI responses
-  String _cleanupResponseText(String text) {
-    // Replace common placeholder patterns with more user-friendly text
-    String cleaned = text;
-
-    // Replace customer placeholders
-    cleaned = cleaned.replaceAll(RegExp(r'\[customer name\]', caseSensitive: false), 'the customer');
-    cleaned = cleaned.replaceAll(RegExp(r'\[customer id\]', caseSensitive: false), 'customer ID');
-    cleaned = cleaned.replaceAll(RegExp(r'\[customer\]', caseSensitive: false), 'customer');
-
-    // Replace invoice placeholders
-    cleaned = cleaned.replaceAll(RegExp(r'\[invoice id\]', caseSensitive: false), 'invoice ID');
-    cleaned = cleaned.replaceAll(RegExp(r'\[invoice number\]', caseSensitive: false), 'invoice number');
-    cleaned = cleaned.replaceAll(RegExp(r'\[invoice\]', caseSensitive: false), 'invoice');
-
-    // Replace product placeholders
-    cleaned = cleaned.replaceAll(RegExp(r'\[product name\]', caseSensitive: false), 'the product');
-    cleaned = cleaned.replaceAll(RegExp(r'\[product id\]', caseSensitive: false), 'product ID');
-    cleaned = cleaned.replaceAll(RegExp(r'\[product\]', caseSensitive: false), 'product');
-
-    // Replace date/time placeholders
-    cleaned = cleaned.replaceAll(RegExp(r'\[date\]', caseSensitive: false), 'the date');
-    cleaned = cleaned.replaceAll(RegExp(r'\[time\]', caseSensitive: false), 'the time');
-
-    // Replace amount placeholders
-    cleaned = cleaned.replaceAll(RegExp(r'\[amount\]', caseSensitive: false), 'the amount');
-    cleaned = cleaned.replaceAll(RegExp(r'\[price\]', caseSensitive: false), 'the price');
-    cleaned = cleaned.replaceAll(RegExp(r'\[total\]', caseSensitive: false), 'the total');
-
-    // Replace general placeholders
-    cleaned = cleaned.replaceAll(RegExp(r'\[.*?\]', caseSensitive: false), 'the requested information');
-
-    return cleaned;
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -5221,7 +5135,7 @@ class MessageBubble extends StatelessWidget {
                                 ? Colors.red
                                 : message.type == MessageType.system
                                     ? Colors.white.withValues(alpha: 0.3)
-                                    : Colors.white.withOpacity(0.2),
+                                    : Colors.white.withValues(alpha: 0.2),
                           ),
                   ),
                   child: Column(
@@ -5248,7 +5162,7 @@ class MessageBubble extends StatelessWidget {
                     decoration: BoxDecoration(
                       color: const Color(0xFF1A1A1A),
                       borderRadius: BorderRadius.circular(15),
-                      border: Border.all(color: Colors.white.withOpacity(0.2)),
+                      border: Border.all(color: Colors.white.withValues(alpha: 0.2)),
                     ),
                     child: Column(
                       children: [
@@ -5397,7 +5311,7 @@ class MessageBubble extends StatelessWidget {
           horizontalInterval: maxValue / 4,
           getDrawingHorizontalLine: (value) {
             return FlLine(
-              color: Colors.white.withOpacity(0.1),
+              color: Colors.white.withValues(alpha: 0.1),
               strokeWidth: 1,
             );
           },
@@ -5501,23 +5415,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
           );
         }
       } else {
-        final success = false; // Removed BiometricAuthService - use Face Authentication instead
-        if (success) {
-          setState(() => _isBiometricEnabled = true);
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Biometric login enabled successfully!'),
-              backgroundColor: Colors.green,
-            ),
-          );
-        } else {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Failed to enable biometric login. Authentication may have been cancelled.'),
-              backgroundColor: Colors.red,
-            ),
-          );
-        }
+        // Removed BiometricAuthService - use Face Authentication instead
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Use Face Authentication instead of biometric login'),
+            backgroundColor: Colors.orange,
+          ),
+        );
       }
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -5675,7 +5579,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                     decoration: BoxDecoration(
-                      color: widget.user.roleColor.withOpacity(0.2),
+                      color: widget.user.roleColor.withValues(alpha: 0.2),
                       borderRadius: BorderRadius.circular(15),
                       border: Border.all(color: widget.user.roleColor.withValues(alpha: 0.5)),
                     ),
@@ -5709,7 +5613,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
               decoration: BoxDecoration(
                 color: const Color(0xFF1A1A1A),
                 borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: Colors.white.withOpacity(0.2)),
+                border: Border.all(color: Colors.white.withValues(alpha: 0.2)),
               ),
               child: Column(
                 children: [
@@ -5777,7 +5681,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
               decoration: BoxDecoration(
                 color: const Color(0xFF1A1A1A),
                 borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: Colors.white.withOpacity(0.2)),
+                border: Border.all(color: Colors.white.withValues(alpha: 0.2)),
               ),
               child: Column(
                 children: [
@@ -5834,7 +5738,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       width: double.infinity,
                       padding: const EdgeInsets.all(12),
                       decoration: BoxDecoration(
-                        color: Colors.grey.withOpacity(0.2),
+                        color: Colors.grey.withValues(alpha: 0.2),
                         borderRadius: BorderRadius.circular(10),
                       ),
                       child: const Row(
@@ -6061,7 +5965,7 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                   ),
                   const SizedBox(height: 16),
                   DropdownButtonFormField<String>(
-                    value: selectedRole,
+                    initialValue: selectedRole,
                     style: const TextStyle(color: Colors.white),
                     dropdownColor: const Color(0xFF2A2A2A),
                     decoration: InputDecoration(
@@ -6295,7 +6199,7 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                                   decoration: BoxDecoration(
                                     color: const Color(0xFF1A1A1A),
                                     borderRadius: BorderRadius.circular(12),
-                                    border: Border.all(color: Colors.white.withOpacity(0.2)),
+                                    border: Border.all(color: Colors.white.withValues(alpha: 0.2)),
                                   ),
                                   child: ListTile(
                                     leading: Container(
@@ -6323,7 +6227,7 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                                             Container(
                                               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                                               decoration: BoxDecoration(
-                                                color: user.roleColor.withOpacity(0.2),
+                                                color: user.roleColor.withValues(alpha: 0.2),
                                                 borderRadius: BorderRadius.circular(12),
                                                 border: Border.all(color: user.roleColor.withValues(alpha: 0.5)),
                                               ),
@@ -6337,7 +6241,7 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                                               Container(
                                                 padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                                                 decoration: BoxDecoration(
-                                                  color: Colors.blue.withOpacity(0.2),
+                                                  color: Colors.blue.withValues(alpha: 0.2),
                                                   borderRadius: BorderRadius.circular(8),
                                                   border: Border.all(color: Colors.blue.withValues(alpha: 0.5)),
                                                 ),
@@ -6351,7 +6255,7 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                                               Container(
                                                 padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                                                 decoration: BoxDecoration(
-                                                  color: Colors.green.withOpacity(0.2),
+                                                  color: Colors.green.withValues(alpha: 0.2),
                                                   borderRadius: BorderRadius.circular(8),
                                                   border: Border.all(color: Colors.green.withValues(alpha: 0.5)),
                                                 ),

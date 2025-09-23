@@ -671,15 +671,9 @@ class DatabaseAssistant:
             self.model = None
             return
 
-        try:
-            genai.configure(api_key=self.api_key)
-            self.model = genai.GenerativeModel('gemini-1.5-flash')
-            test_response = self.model.generate_content("Test connection")
-            logger.info("Gemini AI model connected successfully")
-        except Exception as e:
-            logger.error(f"Failed to connect to Gemini: {e}")
-            logger.warning("AI features will be disabled")
-            self.model = None
+        # Skip Gemini completely - using Ollama instead
+        logger.info("Skipping Gemini AI - using Ollama phi3:mini instead")
+        self.model = None
     
     def setup_database_pool(self):
         """Setup database connection pool"""
@@ -1123,7 +1117,7 @@ class DatabaseAssistant:
         role = user_data['role']
         
         # Process with improved Gemini AI including conversation context
-        gemini_response = self.process_with_gemini_for_role(user_input, role, conversation_history)
+        ollama_response = self.process_with_ollama_for_role(user_input, role, conversation_history)
         
         # Initialize response
         response_data = {
@@ -1137,8 +1131,8 @@ class DatabaseAssistant:
         }
         
         try:
-            if gemini_response.get('needs_sql', False):
-                sql_query = gemini_response.get('sql_query', '')
+            if ollama_response.get('needs_sql', False):
+                sql_query = ollama_response.get('sql_query', '')
                 
                 if sql_query:
                     # Validate query for user role
@@ -1161,7 +1155,7 @@ class DatabaseAssistant:
                         display_data = df_result.head(50).to_dict('records')
                         
                         # Process the response message with actual data
-                        base_message = gemini_response.get('response_message', 'Query completed successfully.')
+                        base_message = ollama_response.get('response_message', 'Query completed successfully.')
                         processed_message = base_message
 
                         # Enhanced placeholder replacement for different query types
@@ -1215,7 +1209,7 @@ class DatabaseAssistant:
                         })
                         
                         # Create chart if appropriate and data is suitable
-                        chart_type = gemini_response.get('suggested_chart', 'none')
+                        chart_type = ollama_response.get('suggested_chart', 'none')
                         if chart_type in ['bar', 'pie'] and len(df_result.columns) >= 2:
                             chart_title = f"Data Analysis - {user_input[:50]}..."
                             chart_base64 = self.create_chart(df_result, chart_type, chart_title)
@@ -1243,7 +1237,7 @@ class DatabaseAssistant:
                 # No SQL needed - return the response message directly
                 response_data.update({
                     'success': True,
-                    'message': gemini_response.get('response_message', 'I can help you with customer counts, product lists, and sales data.')
+                    'message': ollama_response.get('response_message', 'I can help you with customer counts, product lists, and sales data.')
                 })
             
             return response_data
@@ -1257,13 +1251,10 @@ class DatabaseAssistant:
             })
             return response_data
 
-    def process_with_gemini_for_role(self, user_input: str, role: str, conversation_history: List[Dict] = None) -> Dict[str, Any]:
+    def process_with_ollama_for_role(self, user_input: str, role: str, conversation_history: List[Dict] = None) -> Dict[str, Any]:
         """Process user input with Gemini AI including conversation memory - ENHANCED VERSION"""
         try:
-            # If AI model is not available, use fallback
-            if not self.model:
-                logger.warning("AI model not available, using fallback response")
-                return self._get_fallback_response_with_context(user_input, role, conversation_history)
+            # AI model is intentionally None - we use Ollama instead
 
             schema = self.get_database_schema_for_role(role)
             
@@ -1293,15 +1284,20 @@ USER ROLE: {role}
 CRITICAL INSTRUCTIONS:
 1. Consider the conversation history when generating responses - reference previous queries and build on past context
 2. For count/number queries, generate SQL that returns a single COUNT(*) value
-3. For year-specific queries (2023, 2024, 2025), use EXTRACT(YEAR FROM invoice_date) = YEAR
+3. **CRITICAL SQL SYNTAX**: Use these exact patterns:
+   - Current year: EXTRACT(YEAR FROM invoice_date) = EXTRACT(YEAR FROM CURRENT_DATE)
+   - Specific year: EXTRACT(YEAR FROM invoice_date) = 2024 (literal number only)
+   - All records: SELECT COUNT(*) FROM invoices (no WHERE clause)
+   - Never use: (CURRENT_DATE - INTERVAL '1 year') in comparisons
+   - Never use: undefined variables like YEAR
 4. For "invoices per year" queries, GROUP BY the year to show breakdown by year
 5. For chart requests, ensure the SQL returns proper columns for visualization
-6. Be precise with SQL - use exact PostgreSQL syntax
+6. Be precise with SQL - use exact PostgreSQL syntax with proper data type matching
 7. Provide natural, conversational responses that reference previous discussions when relevant
 8. If the user asks follow-up questions, understand they're building on previous queries
 9. **CRITICAL MATH VALIDATION**: For average calculations:
    - Monthly average = Total annual sales ÷ 12 months
-   - Use: SELECT SUM(total_amount)/12 as monthly_average FROM invoices WHERE EXTRACT(YEAR FROM invoice_date) = YEAR
+   - Use: SELECT SUM(total_amount)/12 as monthly_average FROM invoices WHERE EXTRACT(YEAR FROM invoice_date) = 2024
    - Example: $26,000,000 annual ÷ 12 = $2,166,667 monthly average (NOT $7,000!)
    - Always double-check mathematical logic before generating SQL
    - For averages across months: SELECT AVG(monthly_total) FROM (SELECT SUM(total_amount) as monthly_total FROM invoices GROUP BY EXTRACT(YEAR FROM invoice_date), EXTRACT(MONTH FROM invoice_date))
@@ -1323,6 +1319,14 @@ RESPONSE FORMAT (JSON):
 
 EXAMPLES WITH CONTEXT:
 
+For "how many invoices do I have":
+{{
+    "needs_sql": true,
+    "sql_query": "SELECT COUNT(*) FROM invoices",
+    "response_message": "You have [COUNT] invoices in total.",
+    "suggested_chart": "none"
+}}
+
 For "how many invoices do we have in 2024" (first time):
 {{
     "needs_sql": true,
@@ -1339,6 +1343,14 @@ For "what about 2023?" (follow-up after asking about 2024):
     "suggested_chart": "none"
 }}
 
+For "show me all users":
+{{
+    "needs_sql": true,
+    "sql_query": "SELECT username, full_name, role FROM users",
+    "response_message": "Here are all the users in the system:",
+    "suggested_chart": "none"
+}}
+
 For "show me a chart of that" (after discussing yearly data):
 {{
     "needs_sql": true,
@@ -1350,8 +1362,21 @@ For "show me a chart of that" (after discussing yearly data):
 Generate your response in valid JSON format:
 """
 
-            response = self.model.generate_content(prompt)
-            response_text = response.text.strip()
+            try:
+                from app import call_ollama
+                response_text = call_ollama(prompt)
+
+                # Check if Ollama returned an error message
+                if response_text.startswith("Ollama not available") or response_text.startswith("Ollama error") or response_text.startswith("Ollama connection error"):
+                    logger.error(f"Ollama error: {response_text}")
+                    return self._get_fallback_response_with_context(user_input, role, conversation_history)
+
+            except ImportError as e:
+                logger.error(f"Failed to import call_ollama: {e}")
+                return self._get_fallback_response_with_context(user_input, role, conversation_history)
+            except Exception as e:
+                logger.error(f"Error calling Ollama: {e}")
+                return self._get_fallback_response_with_context(user_input, role, conversation_history)
             
             # Clean up response text
             if response_text.startswith('```'):
@@ -1367,26 +1392,46 @@ Generate your response in valid JSON format:
                 response_text = '\n'.join(json_lines)
             
             try:
-                gemini_response = json.loads(response_text)
-                
+                # Try to extract JSON if wrapped in code blocks or extra text
+                cleaned_response = response_text.strip()
+                if '```json' in cleaned_response:
+                    # Extract JSON from markdown code blocks
+                    start = cleaned_response.find('```json') + 7
+                    end = cleaned_response.find('```', start)
+                    if end != -1:
+                        cleaned_response = cleaned_response[start:end].strip()
+                elif cleaned_response.startswith('```') and cleaned_response.endswith('```'):
+                    # Remove generic code blocks
+                    cleaned_response = cleaned_response[3:-3].strip()
+
+                ollama_response = json.loads(cleaned_response)
+
                 # Validate and fix response structure
-                if 'needs_sql' not in gemini_response:
-                    gemini_response['needs_sql'] = False
-                if 'response_message' not in gemini_response:
-                    gemini_response['response_message'] = "I can help you with your database questions."
-                if 'suggested_chart' not in gemini_response:
-                    gemini_response['suggested_chart'] = 'none'
-                if gemini_response['needs_sql'] and 'sql_query' not in gemini_response:
-                    gemini_response['sql_query'] = ""
-                    
-                logger.info(f"Gemini AI processed query with context successfully: {user_input}")
-                return gemini_response
-                
+                if not isinstance(ollama_response, dict):
+                    logger.error(f"Ollama response is not a dictionary: {type(ollama_response)}")
+                    return self._get_fallback_response_with_context(user_input, role, conversation_history)
+
+                if 'needs_sql' not in ollama_response:
+                    ollama_response['needs_sql'] = False
+                if 'response_message' not in ollama_response:
+                    ollama_response['response_message'] = "I can help you with your database questions."
+                if 'suggested_chart' not in ollama_response:
+                    ollama_response['suggested_chart'] = 'none'
+                if ollama_response['needs_sql'] and 'sql_query' not in ollama_response:
+                    ollama_response['sql_query'] = ""
+
+                logger.info(f"Ollama AI processed query with context successfully: {user_input}")
+                return ollama_response
+
             except json.JSONDecodeError as e:
-                logger.error(f"Failed to parse Gemini response as JSON: {e}")
-                logger.error(f"Raw response: {response_text}")
-                
+                logger.error(f"Failed to parse Ollama response as JSON: {e}")
+                logger.error(f"Raw response (first 500 chars): {response_text[:500]}")
+                logger.error(f"Raw response (last 200 chars): {response_text[-200:]}")
+
                 # Enhanced fallback with conversation context
+                return self._get_fallback_response_with_context(user_input, role, conversation_history)
+            except Exception as e:
+                logger.error(f"Unexpected error parsing Ollama response: {e}")
                 return self._get_fallback_response_with_context(user_input, role, conversation_history)
                 
         except Exception as e:

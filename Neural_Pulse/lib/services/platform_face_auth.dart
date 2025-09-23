@@ -1,6 +1,5 @@
 import 'dart:io';
 import 'dart:convert';
-import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'biometric_auth_service.dart';
 import '../main.dart'; // Import to access ApiService

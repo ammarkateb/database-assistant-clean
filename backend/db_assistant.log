@@ -1,4 +1,25 @@
-2025-09-17 13:29:58,756 - INFO - Gemini AI model connected successfully
-2025-09-17 13:30:00,035 - INFO - Database connection pool created
-2025-09-17 13:30:18,576 - INFO - Gemini AI model connected successfully
-2025-09-17 13:30:19,542 - INFO - Database connection pool created
+2025-09-23 07:56:17,746 - INFO - Skipping Gemini AI - using Ollama phi3:mini instead
+2025-09-23 07:56:18,749 - INFO - Database connection pool created
+2025-09-23 07:56:32,281 - INFO - Skipping Gemini AI - using Ollama phi3:mini instead
+2025-09-23 07:56:33,134 - INFO - Database connection pool created
+2025-09-23 07:56:48,222 - INFO - Skipping Gemini AI - using Ollama phi3:mini instead
+2025-09-23 07:56:49,006 - INFO - Database connection pool created
+2025-09-23 07:56:49,379 - ERROR - Database error: null value in column "salt" of relation "users" violates not-null constraint
+DETAIL:  Failing row contains (12, testuser, test@example.com, ecd71870d1963316a97e3ac3408c9835ad8cf0f3c1bc703527c30265534f75ae, null, Test User, admin, t, f, null, 2025-09-23 04:56:49.208289, null, 0, null, f).
+
+2025-09-23 07:57:28,556 - INFO - Skipping Gemini AI - using Ollama phi3:mini instead
+2025-09-23 07:57:29,359 - INFO - Database connection pool created
+2025-09-23 08:16:34,454 - INFO - Skipping Gemini AI - using Ollama phi3:mini instead
+2025-09-23 08:16:35,950 - INFO - Database connection pool created
+2025-09-23 08:16:36,361 - ERROR - Database error: column "face_encoding_count" does not exist
+LINE 1: SELECT username, face_encoding_count FROM users WHERE face_e...
+                         ^
+
+2025-09-23 08:16:43,989 - INFO - Skipping Gemini AI - using Ollama phi3:mini instead
+2025-09-23 08:16:44,852 - INFO - Database connection pool created
+2025-09-23 08:16:53,438 - INFO - Skipping Gemini AI - using Ollama phi3:mini instead
+2025-09-23 08:16:54,191 - INFO - Database connection pool created
+2025-09-23 08:17:08,030 - INFO - Skipping Gemini AI - using Ollama phi3:mini instead
+2025-09-23 08:17:08,814 - INFO - Database connection pool created
+2025-09-23 08:17:33,926 - INFO - Skipping Gemini AI - using Ollama phi3:mini instead
+2025-09-23 08:17:34,775 - INFO - Database connection pool created

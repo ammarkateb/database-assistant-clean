@@ -2,7 +2,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 class ApiService {
-  static const String baseUrl = 'https://database-assistant-clean-production.up.railway.app';
+  static const String baseUrl = 'https://neural-pulse-production.up.railway.app';
   static Map<String, String> _cookies = {};
 
   static Map<String, String> _getHeaders() {
@@ -165,6 +165,39 @@ class ApiService {
         return {
           'success': false,
           'message': responseData['message'] ?? 'Failed to get AI response',
+        };
+      }
+    } catch (e) {
+      return {
+        'success': false,
+        'message': 'Network error: $e',
+      };
+    }
+  }
+
+  static Future<Map<String, dynamic>> sendQuery(String query, {List<dynamic>? conversationHistory}) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/query'),
+        headers: _getHeaders(),
+        body: json.encode({
+          'query': query,
+        }),
+      ).timeout(const Duration(seconds: 30));
+
+      final responseData = json.decode(response.body);
+
+      if (response.statusCode == 200 && responseData['success']) {
+        return {
+          'success': true,
+          'message': responseData['message'],
+          'data': responseData['data'] ?? [],
+          'sql_query': responseData['sql_query'],
+        };
+      } else {
+        return {
+          'success': false,
+          'message': responseData['message'] ?? 'Query failed',
         };
       }
     } catch (e) {

@@ -75,23 +75,86 @@ if FACIAL_AUTH_AVAILABLE:
         logger.error(f"Failed to initialize facial auth system: {e}")
         FACIAL_AUTH_AVAILABLE = False
 
-# Initialize Gemini AI
-print("=== INITIALIZING GEMINI AI ===")
+# Initialize Ollama
+print("=== INITIALIZING OLLAMA ===")
 try:
-    import google.generativeai as genai
-    gemini_api_key = os.getenv("GOOGLE_API_KEY")
-    if gemini_api_key:
-        genai.configure(api_key=gemini_api_key)
-        gemini_model = genai.GenerativeModel('gemini-1.5-flash')
-        test_response = gemini_model.generate_content("Test")
-        AI_AVAILABLE = True
-        logger.info("Gemini AI initialized successfully")
+    import requests
+
+    # First check if Ollama is running
+    response = requests.get("http://localhost:11434/api/tags", timeout=5)
+    if response.status_code == 200:
+        logger.info("Ollama server is running")
+
+        # Check if phi3:mini model is available
+        models = response.json().get('models', [])
+        phi3_available = any('phi3:mini' in model.get('name', '') for model in models)
+
+        if phi3_available:
+            AI_AVAILABLE = True
+            logger.info("Ollama initialized successfully with phi3:mini model")
+            print("✓ Ollama and phi3:mini model available")
+        else:
+            AI_AVAILABLE = False
+            logger.warning("phi3:mini model not found in Ollama. Run: ollama pull phi3:mini")
+            print("⚠ Ollama running but phi3:mini model not found")
     else:
         AI_AVAILABLE = False
-        logger.warning("GOOGLE_API_KEY not found")
+        logger.warning(f"Ollama not responding: HTTP {response.status_code}")
+        print("⚠ Ollama server not responding")
+except requests.exceptions.ConnectionError:
+    AI_AVAILABLE = False
+    logger.error("Cannot connect to Ollama - is it running on localhost:11434?")
+    print("✗ Ollama connection failed - make sure Ollama is running")
 except Exception as e:
     AI_AVAILABLE = False
-    logger.error(f"Failed to initialize Gemini AI: {e}")
+    logger.error(f"Failed to connect to Ollama: {e}")
+    print(f"✗ Ollama initialization error: {e}")
+
+def call_ollama(prompt):
+    """Call Ollama API with phi3:mini model"""
+    if not AI_AVAILABLE:
+        logger.warning("Ollama not available - returning fallback response")
+        return "Ollama not available"
+
+    try:
+        logger.info(f"Calling Ollama with prompt length: {len(prompt)} characters")
+
+        response = requests.post(
+            "http://localhost:11434/api/generate",
+            json={
+                "model": "phi3:mini",
+                "prompt": prompt,
+                "stream": False,
+                "options": {
+                    "temperature": 0.1,
+                    "num_predict": 1000
+                }
+            },
+            timeout=60  # Increased timeout for complex queries
+        )
+
+        if response.status_code == 200:
+            result = response.json()
+            ollama_response = result.get("response", "No response from Ollama")
+            logger.info(f"Ollama response received successfully, length: {len(ollama_response)} characters")
+            return ollama_response
+        else:
+            error_msg = f"Ollama error: HTTP {response.status_code}"
+            logger.error(error_msg)
+            return error_msg
+
+    except requests.exceptions.Timeout:
+        error_msg = "Ollama connection timeout (60s exceeded)"
+        logger.error(error_msg)
+        return f"Ollama connection error: {error_msg}"
+    except requests.exceptions.ConnectionError:
+        error_msg = "Cannot connect to Ollama - is it running on localhost:11434?"
+        logger.error(error_msg)
+        return f"Ollama connection error: {error_msg}"
+    except Exception as e:
+        error_msg = f"Unexpected Ollama error: {str(e)}"
+        logger.error(error_msg)
+        return f"Ollama connection error: {error_msg}"
 
 print(f"=== INITIALIZATION COMPLETE ===")
 print(f"DB_AVAILABLE: {DB_AVAILABLE}")
@@ -233,6 +296,99 @@ def login():
         return jsonify({
             'success': False,
             'message': 'Login failed due to server error'
+        }), 500
+
+@app.route('/register', methods=['POST'])
+def register():
+    """User registration"""
+    if not DB_AVAILABLE:
+        return jsonify({
+            'success': False,
+            'message': 'Database not available'
+        }), 500
+
+    try:
+        data = request.get_json()
+
+        required_fields = ['username', 'password', 'email']
+        for field in required_fields:
+            if not data or field not in data:
+                return jsonify({
+                    'success': False,
+                    'message': f'Field {field} is required'
+                }), 400
+
+        username = data['username'].strip()
+        password = data['password']
+        email = data['email'].strip()
+
+        # Validate inputs
+        if not username or not password or not email:
+            return jsonify({
+                'success': False,
+                'message': 'All fields must be non-empty'
+            }), 400
+
+        # Create password hash
+        salt = hashlib.sha256(username.encode()).hexdigest()[:16]
+        password_hash = hashlib.sha256((password + salt).encode()).hexdigest()
+
+        with db_assistant.get_db_connection() as conn:
+            cursor = conn.cursor()
+
+            # Check if username already exists
+            cursor.execute("SELECT username FROM users WHERE username = %s", (username,))
+            if cursor.fetchone():
+                return jsonify({
+                    'success': False,
+                    'message': 'Username already exists'
+                }), 400
+
+            # Check if email already exists
+            cursor.execute("SELECT email FROM users WHERE email = %s", (email,))
+            if cursor.fetchone():
+                return jsonify({
+                    'success': False,
+                    'message': 'Email already exists'
+                }), 400
+
+            # Insert new user (default role as viewer)
+            cursor.execute("""
+                INSERT INTO users (username, password_hash, salt, full_name, role, email, created_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                RETURNING user_id, username, full_name, role, email
+            """, (username, password_hash, salt, username, 'viewer', email, datetime.now()))
+
+            user_data = cursor.fetchone()
+            conn.commit()
+
+            if user_data:
+                user = {
+                    'user_id': user_data[0],
+                    'username': user_data[1],
+                    'full_name': user_data[2],
+                    'role': user_data[3],
+                    'email': user_data[4]
+                }
+
+                logger.info(f"New user registered: {username}")
+
+                return jsonify({
+                    'success': True,
+                    'message': 'User registered successfully',
+                    'user': user
+                })
+            else:
+                return jsonify({
+                    'success': False,
+                    'message': 'Failed to create user'
+                }), 500
+
+    except Exception as e:
+        logger.error(f"Registration error: {e}")
+        return jsonify({
+            'success': False,
+            'message': 'Registration failed due to server error'
         }), 500
 
 @app.route('/logout', methods=['POST'])
@@ -885,6 +1041,73 @@ def delete_invoice(user, invoice_id):
         }), 500
 
 # QUERY ENDPOINTS
+# Sync endpoints for Flutter app compatibility
+@app.route('/api/sync/users', methods=['GET'])
+@require_auth
+def sync_users(user):
+    """Sync users - Flutter app compatibility"""
+    return jsonify({'success': True, 'users': [], 'has_more': False})
+
+@app.route('/api/sync/chat_sessions', methods=['GET'])
+@require_auth
+def sync_chat_sessions(user):
+    """Sync chat sessions - Flutter app compatibility"""
+    return jsonify({'success': True, 'sessions': [], 'has_more': False})
+
+@app.route('/api/sync/chat_messages', methods=['GET'])
+@require_auth
+def sync_chat_messages(user):
+    """Sync chat messages - Flutter app compatibility"""
+    return jsonify({'success': True, 'messages': [], 'has_more': False})
+
+@app.route('/api/sync/messages', methods=['GET'])
+@require_auth
+def sync_messages(user):
+    """Sync messages - Flutter app compatibility"""
+    return jsonify({'success': True, 'messages': [], 'has_more': False})
+
+@app.route('/api/sync/invoices', methods=['GET'])
+@require_auth
+def sync_invoices(user):
+    """Sync invoices - Flutter app compatibility"""
+    return jsonify({'success': True, 'invoices': [], 'has_more': False})
+
+@app.route('/api/sync/database_queries', methods=['GET'])
+@require_auth
+def sync_database_queries(user):
+    """Sync database queries - Flutter app compatibility"""
+    return jsonify({'success': True, 'queries': [], 'has_more': False})
+
+# Chat session endpoints for Flutter app compatibility
+@app.route('/chat/sessions', methods=['POST'])
+@require_auth
+def create_chat_session(user):
+    """Create a new chat session - Flutter app compatibility"""
+    return jsonify({
+        'success': True,
+        'session_id': f"session_{user['user_id']}_{int(datetime.now().timestamp())}",
+        'message': 'Chat session created'
+    })
+
+@app.route('/chat/message', methods=['POST'])
+@require_auth
+def send_chat_message(user):
+    """Send a chat message - Flutter app compatibility"""
+    try:
+        data = request.get_json()
+        message = data.get('message', '')
+
+        if not message:
+            return jsonify({'success': False, 'message': 'Message is required'}), 400
+
+        # Use the existing query logic by calling handle_authenticated_query
+        request._cached_json = {'query': message}
+        return handle_authenticated_query(user)
+
+    except Exception as e:
+        logger.error(f"Chat message error: {e}")
+        return jsonify({'success': False, 'message': 'Failed to send message'}), 500
+
 @app.route('/query', methods=['POST'])
 @require_auth
 def handle_authenticated_query(user):

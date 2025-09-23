@@ -520,9 +520,7 @@ extension ApiServiceExtension on ApiService {
   }
 
   Future<Map<String, dynamic>> sendQuery(String query, {List<dynamic>? conversationHistory}) async {
-    // This should call the actual ApiService.sendQuery method from main.dart
-    // For now, return a placeholder - this will be implemented when we integrate
-    throw UnimplementedError('Will delegate to main ApiService.sendQuery');
+    return await ApiService.sendQuery(query, conversationHistory: conversationHistory);
   }
 
   Future<Map<String, dynamic>> executeDatabaseQuery(String queryText) async {
